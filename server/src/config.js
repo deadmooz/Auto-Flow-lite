@@ -1,5 +1,12 @@
 import path from 'node:path';
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+// Optional settings file: copy .env.example to .env (next to package.json). Real environment variables still win.
+const envFile = fileURLToPath(new URL('../../.env', import.meta.url));
+if (fs.existsSync(envFile)) {
+  try { process.loadEnvFile(envFile); } catch (e) { console.warn(`[liteforeflow] Could not read ${envFile}: ${e.message}`); }
+}
 
 const env = process.env;
 const port = Number(env.PORT) || 3000;
@@ -7,7 +14,8 @@ const port = Number(env.PORT) || 3000;
 export const config = {
   port,
   publicUrl: (env.PUBLIC_URL || `http://localhost:${port}`).replace(/\/$/, ''),
-  dataDir: env.DATA_DIR || path.resolve(process.cwd(), 'data'),
+  // Always next to the app (not the current folder), so starting it from anywhere finds the same data.
+  dataDir: env.DATA_DIR || fileURLToPath(new URL('../../data', import.meta.url)),
   dbPath: env.DB_PATH || null,
   // Set DATABASE_URL for Postgres (required for multi-process); otherwise SQLite in DATA_DIR.
   databaseUrl: env.DATABASE_URL || '',

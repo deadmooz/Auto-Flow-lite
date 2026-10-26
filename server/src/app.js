@@ -11,6 +11,7 @@ import { webhookRouter } from './routes/webhooks.js';
 import './jobs.js'; // registers the job handler with the queue
 import { queueMode } from './queue.js';
 import { dialect } from './db.js';
+import { sandboxMode } from './sandbox.js';
 
 export function createApp() {
   const app = express();
@@ -37,7 +38,7 @@ export function createApp() {
   app.use(express.urlencoded({ extended: true, limit: '1mb' }));
   app.use(express.text({ type: ['text/*'], limit: '1mb' }));
 
-  app.get('/api/health', (req, res) => res.json({ ok: true, db: dialect, queue: queueMode }));
+  app.get('/api/health', (req, res) => res.json({ ok: true, db: dialect, queue: queueMode, sandbox: sandboxMode() }));
   app.use('/webhook', webhookRouter);
 
   app.use('/api/auth', authRouter);

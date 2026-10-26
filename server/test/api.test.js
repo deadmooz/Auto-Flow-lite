@@ -401,13 +401,16 @@ test('workspace isolation and stripe signature', async () => {
 test('sandbox: memory bombs and host APIs are contained, large item counts stay fast', async () => {
   const token = await newUser();
 
-  const bomb = await createWf(token, 'bomb', [
-    node('t', 'trigger.manual', 'Start'),
-    node('c', 'data.code', 'Bomb', { mode: 'runOnce', code: 'const a = []; while (true) { a.push(new Array(1e6).fill(7)); }' }),
-  ], [edge('t', 'c')]);
-  const r1 = await api('POST', `/api/workflows/${bomb.id}/run`, { token });
-  assert.equal(r1.data.status, 'error');
-  assert.match(r1.data.error.message, /memory|timed out/i);
+  // The basic fallback sandbox (LITEFOREFLOW_SANDBOX=vm) has no memory cap by design, so this check only applies to isolated-vm.
+  if (process.env.LITEFOREFLOW_SANDBOX !== 'vm') {
+    const bomb = await createWf(token, 'bomb', [
+      node('t', 'trigger.manual', 'Start'),
+      node('c', 'data.code', 'Bomb', { mode: 'runOnce', code: 'const a = []; while (true) { a.push(new Array(1e6).fill(7)); }' }),
+    ], [edge('t', 'c')]);
+    const r1 = await api('POST', `/api/workflows/${bomb.id}/run`, { token });
+    assert.equal(r1.data.status, 'error');
+    assert.match(r1.data.error.message, /memory|timed out/i);
+  }
 
   const probe = await createWf(token, 'probe', [
     node('t', 'trigger.manual', 'Start'),

@@ -95,7 +95,8 @@ async function createSqlite() {
 
 /* ----------------------------------- Postgres --------------------------------- */
 async function createPostgres() {
-  const pg = (await import('pg')).default;
+  let pg;
+  try { pg = (await import('pg')).default; } catch { throw new Error('Postgres support is not installed. Run:  npm run scale-up'); }
   pg.types.setTypeParser(20, (v) => parseInt(v, 10)); // COUNT(*) etc. come back as numbers, like SQLite
   const toPg = (sql) => { let i = 0; return sql.replace(/\?/g, () => { i += 1; return `$${i}`; }); };
   const bind = (p) => p.map((v) => (v === undefined ? null : v));

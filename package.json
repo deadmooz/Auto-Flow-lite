@@ -1,16 +1,41 @@
 {
   "name": "liteforeflow",
+  "version": "0.2.0",
+  "description": "A tiny, self-hosted workflow automation tool. One command to start, no Docker.",
   "private": true,
-  "version": "0.1.0",
   "type": "module",
-  "workspaces": ["server", "web"],
+  "engines": { "node": ">=22.13" },
   "scripts": {
-    "dev": "concurrently -n api,web -c blue,green \"npm:dev:server\" \"npm:dev:web\"",
-    "dev:server": "npm run dev -w server",
-    "dev:web": "npm run dev -w web",
-    "build": "npm run build -w web",
-    "start": "npm run start -w server",
-    "test": "npm test -w server"
+    "prestart": "node scripts/preflight.cjs",
+    "start": "node --max-semi-space-size=2 --max-old-space-size=192 server/src/index.js",
+    "dev": "node --watch server/src/index.js",
+    "worker": "node --max-semi-space-size=2 --max-old-space-size=192 server/src/worker.js",
+    "test": "node --test --test-concurrency=1 server/test/api.test.js",
+    "qa": "node server/test/qa/qa.mjs",
+    "scale-up": "npm install pg bullmq ioredis",
+    "build": "npm install --prefix web && npm run build --prefix web",
+    "dev:web": "npm install --prefix web && npm run dev --prefix web"
   },
-  "devDependencies": { "concurrently": "^9.1.0" }
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "express-async-errors": "^3.1.1",
+    "jsonwebtoken": "^9.0.2",
+    "node-cron": "^3.0.3",
+    "nodemailer": "^6.9.16"
+  },
+  "optionalDependencies": {
+    "isolated-vm": "^7.0.1"
+  },
+  "peerDependencies": {
+    "bullmq": "^6.4.2",
+    "ioredis": "^6.0.0",
+    "pg": "^8.13.1"
+  },
+  "peerDependenciesMeta": {
+    "bullmq": { "optional": true },
+    "ioredis": { "optional": true },
+    "pg": { "optional": true }
+  }
 }

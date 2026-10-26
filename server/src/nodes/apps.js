@@ -212,7 +212,8 @@ defineNode({
   ],
   async execute(ctx, inputs) {
     const c = await ctx.credential();
-    const { default: pg } = await import('pg');
+    let pg;
+    try { pg = (await import('pg')).default; } catch { throw new Error('The Postgres node needs an extra package. Stop LiteForeFlow, run:  npm run scale-up  and start it again.'); }
     const client = new pg.Client({
       host: c.host, port: Number(c.port) || 5432, database: c.database, user: c.user, password: c.password,
       ssl: c.ssl ? { rejectUnauthorized: false } : undefined, connectionTimeoutMillis: 10000,
