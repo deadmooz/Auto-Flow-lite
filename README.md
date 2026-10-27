@@ -6,8 +6,10 @@ everything runs on your own computer and stays there.
 
 ## Start it in 3 steps
 
-**1. Install Node.js once** (the engine that runs LiteForeFlow). Go to <https://nodejs.org>, download the **LTS** version
-and run the installer (keep clicking *Next*). Already have it? Check with `node -v` - it must say 22.13 or higher.
+**1. Node.js (the engine that runs LiteForeFlow)** - you do not have to do anything. If it is missing, `start.bat` /
+`start.sh` offer to download a private copy (about 30 MB) into a `runtime` folder next to the app: no administrator
+rights, nothing else on your computer changes. Prefer your own install? Get the **LTS** from <https://nodejs.org>
+(it must be 22.13 or higher).
 
 **2. Download this project** (green *Code* button -> *Download ZIP* -> unzip it, or `git clone` it).
 
@@ -49,8 +51,8 @@ To stop it, press **Ctrl+C** in the window (or just close the window).
 
 | You see | Do this |
 |---|---|
-| "needs Node.js" / `node` is not recognised | Install the LTS from <https://nodejs.org>, then **close and reopen** the window |
-| "needs Node.js 22.13 or newer" | Install the current LTS from <https://nodejs.org> over the old one |
+| "needs Node.js" | Answer **Y** to download it. Said no, or it failed? Install the LTS from <https://nodejs.org>, then **close and reopen** the window |
+| Node.js too old | Answer **Y** and the launcher uses its own newer copy (your old one stays untouched) |
 | The install fails / is stuck | Check your internet connection, delete the `node_modules` folder, start again |
 | "Port 3000 is already in use" | LiteForeFlow picks the next free port automatically; or run `python run.py --port 3100` |
 | Browser did not open | Open the address printed in the window (http://localhost:3000) yourself |

@@ -21,10 +21,16 @@ def main():
     parser.add_argument("--port", type=int, help="port to listen on (default 3000, or the next free one)")
     args = parser.parse_args()
 
+    # A private Node.js copy downloaded by start.bat / start.sh lives in ./runtime/node
+    local = os.path.join(HERE, "runtime", "node") if WINDOWS else os.path.join(HERE, "runtime", "node", "bin")
+    if os.path.isdir(local):
+        os.environ["PATH"] = local + os.pathsep + os.environ.get("PATH", "")
     node = shutil.which("node")
     npm = shutil.which("npm")
     if not node or not npm:
         print("\n  LiteForeFlow needs Node.js, which is not installed yet.")
+        print("  Easiest: double-click start.bat (Windows) or run ./start.sh (Mac/Linux) - it can download Node.js for you.")
+        print("  Otherwise:")
         print("  1. A download page is opening - install the LTS version (keep clicking Next).")
         print("  2. Then run:  python run.py   again.\n")
         webbrowser.open("https://nodejs.org/en/download")

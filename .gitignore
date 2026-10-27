@@ -10,3 +10,4 @@ coverage
 .github\workflows
 server/test/qa/*-results.json
 QA_REPORT.md
+runtime
