@@ -23,7 +23,8 @@ if errorlevel 1 (
   exit /b 1
 )
 
-if not exist node_modules\express (
+node scripts\preflight.cjs --deps
+if errorlevel 1 (
   echo.
   echo   First start: installing LiteForeFlow. This takes about a minute, needs internet,
   echo   and only happens once.

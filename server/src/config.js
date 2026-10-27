@@ -1,11 +1,17 @@
 import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { parseEnv } from 'node:util';
 
 // Optional settings file: copy .env.example to .env (next to package.json). Real environment variables still win.
 const envFile = fileURLToPath(new URL('../../.env', import.meta.url));
 if (fs.existsSync(envFile)) {
-  try { process.loadEnvFile(envFile); } catch (e) { console.warn(`[liteforeflow] Could not read ${envFile}: ${e.message}`); }
+  try {
+    // Notepad may save with a BOM (UTF-8) or as UTF-16; either would hide the first setting, so decode it ourselves.
+    const raw = fs.readFileSync(envFile);
+    const text = (raw[0] === 0xff && raw[1] === 0xfe ? raw.toString('utf16le') : raw.toString('utf8')).replace(/^﻿/, '');
+    for (const [k, v] of Object.entries(parseEnv(text))) if (!(k in process.env)) process.env[k] = v; // real variables win
+  } catch (e) { console.warn(`[liteforeflow] Could not read ${envFile}: ${e.message}`); }
 }
 
 const env = process.env;

@@ -13,7 +13,7 @@ fi
 
 node scripts/preflight.cjs || exit 1
 
-if [ ! -d node_modules/express ]; then
+if ! node scripts/preflight.cjs --deps; then
   echo ""
   echo "  First start: installing LiteForeFlow (about a minute, needs internet, only once)..."
   echo ""

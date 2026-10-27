@@ -1,5 +1,5 @@
 :root {
-  --bg: #f6f7f9; --surface: #ffffff; --surface-2: #f0f2f5; --border: #dfe3e8; --text: #1b2230; --muted: #6a7487;
+  --bg: #f6f7f9; --surface: #ffffff; --surface-2: #f0f2f5; --border: #dfe3e8; --text: #1b2230; --muted: #5b6578;
   --primary: #5b5bf0; --primary-text: #ffffff; --ok: #0f6b3c; --ok-bg: #e3f6ec; --err: #b42318; --err-bg: #fdecea;
   --warn: #92600a; --warn-bg: #fff4dc; --grid: #d6dae1; --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 4px 14px rgba(16, 24, 40, .06);
 }
@@ -129,6 +129,9 @@ pre.json { margin: 0; padding: 10px; background: var(--surface-2); border-radius
   .table .actions { justify-content: flex-end; }
   .table .ellipsis { max-width: none; white-space: normal; }
   .page { padding: 16px 14px 32px; }
+  button, .table a, .tabs a, .tabs button, select, input:not([type=checkbox]):not([type=radio]) { min-height: 36px; }
+  .table a { display: inline-flex; align-items: center; }
+  button.icon { min-width: 36px; }
   .title-input { width: 100% !important; }
 }
 @media (max-width: 900px) {

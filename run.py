@@ -33,7 +33,7 @@ def main():
     if subprocess.call([node, os.path.join("scripts", "preflight.cjs")], cwd=HERE) != 0:
         return 1
 
-    if not os.path.isdir(os.path.join(HERE, "node_modules", "express")):
+    if subprocess.call([node, os.path.join("scripts", "preflight.cjs"), "--deps"], cwd=HERE) != 0:
         print("\n  First start: installing LiteForeFlow (about a minute, needs internet, only once)...\n")
         code = subprocess.call([npm, "install", "--no-audit", "--no-fund", "--loglevel=error"], cwd=HERE, shell=WINDOWS)
         if code != 0:

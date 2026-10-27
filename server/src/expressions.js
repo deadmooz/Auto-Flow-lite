@@ -79,7 +79,7 @@ export async function runCode(code, data, { timeoutMs = 5000, sandbox } = {}) {
     const out = await ctx.run(
       `(function () {
         const __r = (function () {\n${code}\n})();
-        if (__r && typeof __r.then === 'function') throw new Error('async code / Promises are not supported in V1. Return the value synchronously.');
+        if (__r && typeof __r.then === 'function') { __r.then(null, function () {}); throw new Error('async code / Promises are not supported in V1. Return the value synchronously.'); }
         return JSON.stringify({ result: __r === undefined ? null : __r, logs: globalThis.__logs });
       })()`,
       timeoutMs,

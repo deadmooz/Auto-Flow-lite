@@ -12,7 +12,7 @@
     "worker": "node --max-semi-space-size=2 --max-old-space-size=192 server/src/worker.js",
     "test": "node --test --test-concurrency=1 server/test/api.test.js",
     "qa": "node server/test/qa/qa.mjs",
-    "scale-up": "npm install pg bullmq ioredis",
+    "scale-up": "npm install --save-optional pg@^8.13.1 bullmq@^6.4.2 ioredis@^6.0.0",
     "build": "npm install --prefix web && npm run build --prefix web",
     "dev:web": "npm install --prefix web && npm run dev --prefix web"
   },
@@ -27,15 +27,5 @@
   },
   "optionalDependencies": {
     "isolated-vm": "^7.0.1"
-  },
-  "peerDependencies": {
-    "bullmq": "^6.4.2",
-    "ioredis": "^6.0.0",
-    "pg": "^8.13.1"
-  },
-  "peerDependenciesMeta": {
-    "bullmq": { "optional": true },
-    "ioredis": { "optional": true },
-    "pg": { "optional": true }
   }
 }

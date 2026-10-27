@@ -24,3 +24,17 @@ try {
   console.error('\n  This Node.js build has no built-in database support. Please install the current LTS from https://nodejs.org\n');
   process.exit(1);
 }
+
+// Are all the packages from package.json really installed? `--deps` is used by the launchers: exit code 3 = please run
+// `npm install`. Without the flag (npm start) the same problem is explained and stops the start.
+const fs = require('node:fs');
+const path = require('node:path');
+const root = path.join(__dirname, '..');
+const wantDeps = process.argv.includes('--deps') || process.env.npm_lifecycle_event === 'prestart';
+const missing = !wantDeps ? [] : Object.keys(require('../package.json').dependencies || {})
+  .filter((name) => !fs.existsSync(path.join(root, 'node_modules', name, 'package.json')));
+if (missing.length) {
+  if (process.argv.includes('--deps')) process.exit(3);
+  console.error('\n  The installation is incomplete (missing: ' + missing.join(', ') + ').\n  Fix: run   npm install   in this folder, then start again.\n');
+  process.exit(1);
+}
