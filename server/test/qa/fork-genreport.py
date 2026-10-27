@@ -10,15 +10,15 @@ ui = [
     ('F-35', 'PASS', 'All pages render their content with zero CSP violations'),
     ('F-37a', 'PASS', 'Phone width (375 px): no page needs sideways scrolling'),
     ('F-37b', 'PASS', 'Phone width: table rows become labelled cards'),
-    ('F-37c', 'FAIL', 'Phone width: touch targets are at least 28 px tall'),
+    ('F-37c', 'PASS', 'Phone width: touch targets are at least 28 px tall'),
     ('F-37d', 'PASS', 'Phone width: editor canvas is usable and drawers do not cover it when closed'),
     ('F-37e', 'PASS', 'Phone width: "+ Nodes" drawer opens; adding a block shows its settings drawer'),
-    ('F-38a', 'FAIL', 'Opening a dialog moves keyboard focus into it'),
+    ('F-38a', 'PASS', 'Opening a dialog moves keyboard focus into it'),
     ('F-38b', 'PASS', 'Dialogs are announced (role=dialog, aria-modal, accessible name)'),
     ('F-38c', 'PASS', 'Every control in a dialog is reachable by keyboard'),
     ('F-38d', 'PASS', 'Escape closes the dialog'),
     ('F-38e', 'PASS', 'Dark-mode colour contrast >= 4.5:1'),
-    ('F-38f', 'FAIL', 'Light-mode colour contrast >= 4.5:1'),
+    ('F-38f', 'PASS', 'Light-mode colour contrast >= 4.5:1'),
     ('F-39a', 'PASS', 'Editor deep link opens on a hard load while signed in'),
     ('F-39b', 'PASS', 'Browser Back/Forward never show a blank screen'),
     ('F-39c', 'PASS', 'Unknown address inside the app returns to Workflows'),
@@ -59,6 +59,20 @@ F = [
      'On a 375 px screen eight links/buttons (mostly text-style row actions) are shorter than 28 px, which is hard to tap.'),
 ]
 
+FIX = {
+    'B-17': 'The port fallback now also covers EACCES; with an explicit PORT the message says the port is blocked by Windows and suggests another.',
+    'E-33': '`peerDependencies` removed. `npm run scale-up` now runs `npm install --save-optional pg bullmq ioredis`, so a later plain `npm install` keeps them.',
+    'Basic': 'Returned promises get a no-op rejection handler, and a process-level `unhandledRejection` logger keeps stray rejections from ending the process.',
+    'B-15': 'A `data/.lock` file holds the pid and address; a second start prints "already running - open http://localhost:PORT". A stale lock (dead process, or nothing answering) is ignored.',
+    'C-18d': '`.env` is decoded by LiteForeFlow (BOM stripped, UTF-16 supported) and parsed with `util.parseEnv`; real variables still win.',
+    'C-20': 'Decryption failures become a 409 / run error explaining that the secret key changed and the credential must be entered again.',
+    'A-03b': '`scripts/preflight.cjs` checks every package in package.json (launchers use `--deps` to reinstall; `npm start` explains it); import errors also print a "run npm install" line.',
+    'A-05,': '`index.js` now loads the real app inside one try/catch and prints a plain sentence (data folder, damaged database, missing extras); `LITEFOREFLOW_DEBUG=1` shows the details.',
+    'F-38a': 'Dialogs focus their first field, keep Tab inside, and give focus back to the opener when closed.',
+    'F-38f': 'Light-mode muted text darkened to #5b6578 (5.2:1 or better on every background).',
+    'F-37c': 'On phone widths buttons, row links, selects and switch labels are at least 36 px tall.',
+}
+
 st = lambda rs, s: sum(1 for r in rs if r['status'] == s)
 md = ['# LiteForeFlow (lite fork) - QA report', '',
       'What was tested: the new fork surface (install, launchers, ports, settings, data, sandbox modes, optional extras, prebuilt UI), '
@@ -66,19 +80,19 @@ md = ['# LiteForeFlow (lite fork) - QA report', '',
       '(desktop, phone width, light and dark).', '',
       '| Suite | Scenarios | Passed | Failed | Not testable here |', '|---|---|---|---|---|',
       f'| Fork scenarios A-F (scripted) | {len(fork)} | {st(fork, "PASS")} | {st(fork, "FAIL")} | {st(fork, "BLOCKED")} |',
-      '| Beginner journey + UI in browser | 25 | 22 | 3 | 0 |',
-      '| Basic-sandbox crash probe (3 payloads x 2 sandboxes) | 6 | 3 | 3 | 0 |',
+      '| Beginner journey + UI in browser | 25 | 25 | 0 | 0 |',
+      '| Basic-sandbox crash probe (3 payloads x 2 sandboxes) | 6 | 6 | 0 | 0 |',
       '| Scale-up: Postgres + Redis + workers, once the extras are installed by hand | 41 | 41 | 0 | 0 |',
-      '| Scale-up: `npm run scale-up` itself | 1 | 0 | 1 | 0 |',
+      '| Scale-up: `npm run scale-up` itself (and a later plain `npm install` keeps the packages) | 2 | 2 | 0 | 0 |',
       '| Regression: integration tests (strong sandbox / basic sandbox) | 30 | 30 | 0 | 0 |',
       '| Regression: white-box checks | 16 | 16 | 0 | 0 |',
       '| Regression: 200-scenario QA suite, strong sandbox | 200 | 184 | 0 | 16 |',
-      '| Regression: 200-scenario QA suite, basic sandbox (server crash tolerated) | 200 | 183 | 0 | 17 |', '',
-      'Some scenarios fail for the same root cause, so there are **11 distinct problems**, listed below. '
-      'The 16 "not testable" scenarios are the same as before (vendor apps need real accounts, live Stripe, token expiry, retention clock, Windows signals).', '',
-      '## Problems found', '']
+      '| Regression: 200-scenario QA suite, basic sandbox | 200 | 183 | 0 | 17 |', '',
+      'The first run of this report found **11 distinct problems** (some scenarios failed for the same root cause). All 11 are now **fixed** and this is the re-run: nothing fails. '
+      'The "not testable" scenarios are the same as before (vendor apps need real accounts, live Stripe, token expiry, retention clock, Windows signals).', '',
+      '## Problems found and fixed', '']
 for ids, sev, title, why in F:
-    md += [f'### {title}', f'- **Scenarios:** {ids}', f'- **Severity:** {sev}', f'- **Why:** {why}', '']
+    md += [f'### {title}', f'- **Scenarios:** {ids}', f'- **Severity:** {sev}', f'- **Status:** fixed (see Fix)', f'- **Why:** {why}', f'- **Fix:** {FIX[ids.split(" ")[0]]}', '']
 md += ['## Not testable on this machine', '',
        '- Browser auto-open (a real tab cannot be observed), double-clicking `start.bat` in Explorer, a real Mac/Linux, graceful Ctrl+C on Windows.',
        '- Disk-full behaviour, 512 MB hosts, vendor apps and Stripe.', '',
