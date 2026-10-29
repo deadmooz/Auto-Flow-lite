@@ -30,10 +30,11 @@ defineNode({
 
 defineNode({
   type: 'trigger.cron', name: 'Schedule', group: 'trigger', icon: '⏰', isTrigger: true, inputs: 0,
-  description: 'Start the workflow on a schedule (cron expression).',
+  description: 'Start the workflow on a schedule, for example every day at 9:00.',
   properties: [
-    { name: 'cron', label: 'Cron expression', type: 'string', default: '0 * * * *', required: true, help: 'min hour day month weekday — e.g. "0 9 * * 1-5" = 09:00 on weekdays.' },
-    { name: 'timezone', label: 'Timezone', type: 'string', default: 'UTC', help: 'IANA name, e.g. America/New_York' },
+    // The UI shows a friendly picker for 'schedule'; what is stored is still a plain cron expression.
+    { name: 'cron', label: 'When to run', type: 'schedule', default: '0 * * * *', required: true },
+    { name: 'timezone', label: 'Timezone', type: 'timezone', default: 'UTC' },
   ],
   execute: passTrigger,
 });

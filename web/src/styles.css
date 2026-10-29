@@ -145,3 +145,13 @@ pre.json { margin: 0; padding: 10px; background: var(--surface-2); border-radius
   .palette.open, .panel.open { transform: none; }
   .canvas { flex: 1 1 100%; min-width: 0; }
 }
+
+/* schedule picker */
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field-label { font-weight: 500; }
+.sched select, .sched input[type=time] { max-width: 100%; }
+.sched .narrow { width: 72px; }
+.sched .small, button.small { font-size: 12px; padding: 3px 10px; }
+.sched-summary { background: var(--ok-bg); color: var(--ok); padding: 6px 10px; border-radius: 8px; font-weight: 500; }
+.chip[aria-pressed] { min-width: 44px; }
+button.link-button { border: none; background: none; padding: 0; color: var(--primary); text-decoration: underline; cursor: pointer; font-size: 12px; }
