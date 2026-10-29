@@ -3,6 +3,7 @@ import { Sandbox } from './sandbox.js';
 import { getNodeType, withDefaults } from './nodes/index.js';
 import { loadCredential } from './credentials.js';
 import { pluginForMissingType } from './plugins.js';
+import { config } from './config.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
@@ -179,6 +180,7 @@ export async function runWorkflow(opts) {
 
       const ctx = {
         node, inputs, staticData, workspaceId, depth, sandbox, signal: abort.signal,
+        scratch: {}, // a place for a block to remember things (a loaded credential) for the length of this node run
         workflow: { id: workflow.id, name: workflow.name },
         rawParam: (name) => params[name],
         param: (name, i = 0) => evaluator.resolve(params[name], i),
@@ -252,6 +254,32 @@ export async function runWorkflow(opts) {
 }
 
 async function executeNode(type, ctx, inputs) {
+  if (type.prepareItem) {
+    // Settings are read one item at a time (they may need the expression engine); only the waiting for the web service overlaps.
+    const items = inputs[0];
+    const prepared = [];
+    for (let i = 0; i < items.length; i += 1) prepared.push(await type.prepareItem(ctx, items[i], i));
+    const lanes = type.concurrency > 1 && prepared.length > 1 && prepared.every((p) => type.parallelSafe?.(p))
+      ? Math.min(type.concurrency, config.itemConcurrency, prepared.length) : 1;
+    const results = new Array(prepared.length);
+    let next = 0;
+    let failed = false;
+    const lane = async () => {
+      while (!failed) {
+        const i = next;
+        next += 1;
+        if (i >= prepared.length) return;
+        try { results[i] = await type.runPrepared(ctx, prepared[i], i); } catch (e) { failed = true; throw e; } // the others stop taking new work
+      }
+    };
+    await Promise.all(Array.from({ length: lanes }, lane));
+    const out = [];
+    results.forEach((r, i) => {
+      if (r === null || r === undefined) return;
+      for (const o of Array.isArray(r) ? r : [r]) out.push({ json: o, pairedItem: i });
+    });
+    return [out];
+  }
   if (type.executeItem) {
     const out = [];
     for (let i = 0; i < inputs[0].length; i += 1) {

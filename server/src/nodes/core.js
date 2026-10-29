@@ -72,23 +72,32 @@ defineNode({
     { name: 'timeoutSec', label: 'Timeout (seconds)', type: 'number', default: 30 },
     { name: 'ignoreStatus', label: 'Do not fail on 4xx/5xx', type: 'boolean', default: false },
   ],
-  async executeItem(ctx, item, i) {
+  // Two steps so that read-only calls for many items can wait for the web service at the same time (see registry.js).
+  concurrency: 5,
+  parallelSafe: (req) => req.method === 'GET' || req.method === 'HEAD',
+  async prepareItem(ctx, item, i) {
     const headers = { ...((await ctx.jsonParam('headers', i)) ?? {}) };
     const credId = ctx.rawParam('credential');
     if (credId) {
-      const row = await get('SELECT type FROM credentials WHERE id = ? AND workspace_id = ?', credId, ctx.workspaceId);
-      if (!row) throw new Error('Credential not found');
-      const c = await loadCredential(ctx.workspaceId, credId, row.type);
-      if (row.type === 'httpBearer') headers.authorization = `Bearer ${c.token}`;
-      else if (row.type === 'httpBasic') headers.authorization = `Basic ${Buffer.from(`${c.user}:${c.password}`).toString('base64')}`;
-      else if (row.type === 'httpHeader') headers[c.name] = c.value;
+      // looked up once per node run, not once per item
+      ctx.scratch.auth ??= (async () => {
+        const row = await get('SELECT type FROM credentials WHERE id = ? AND workspace_id = ?', credId, ctx.workspaceId);
+        if (!row) throw new Error('Credential not found');
+        return { type: row.type, data: await loadCredential(ctx.workspaceId, credId, row.type) };
+      })();
+      const { type, data: c } = await ctx.scratch.auth;
+      if (type === 'httpBearer') headers.authorization = `Bearer ${c.token}`;
+      else if (type === 'httpBasic') headers.authorization = `Basic ${Buffer.from(`${c.user}:${c.password}`).toString('base64')}`;
+      else if (type === 'httpHeader') headers[c.name] = c.value;
     }
-    const res = await httpRequest({
+    return {
       method: (await ctx.param('method', i)), url: (await ctx.param('url', i)), headers,
       query: (await ctx.jsonParam('query', i)) ?? {}, body: (await ctx.param('body', i)), bodyType: (await ctx.param('bodyType', i)),
       timeoutMs: Number((await ctx.param('timeoutSec', i)) || 30) * 1000, ignoreStatus: !!(await ctx.param('ignoreStatus', i)),
-      signal: ctx.signal,
-    });
+    };
+  },
+  async runPrepared(ctx, req) {
+    const res = await httpRequest({ ...req, signal: ctx.signal });
     const d = res.data;
     // Arrays are returned under `data`; objects are spread for convenient access ({{ $json.name }}).
     return Array.isArray(d) || typeof d !== 'object' || d === null

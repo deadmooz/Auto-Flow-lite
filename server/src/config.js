@@ -62,6 +62,8 @@ export const config = {
   notionUrl: (env.LITEFOREFLOW_NOTION_URL || 'https://api.notion.com').replace(/\/$/, ''),
   // Extra folder to look for plugins in (besides ./plugins and <data>/plugins).
   pluginsDir: env.PLUGINS_DIR || '',
+  // How many items a read-only API block (HTTP Request GET, REST connector GET) may fetch at the same time. 1 = strictly one by one.
+  itemConcurrency: Math.min(20, Math.max(1, Number(env.ITEM_CONCURRENCY) || 5)),
   enableCodeNode: env.ENABLE_CODE_NODE !== 'false',
   // Set SAVE_SUCCESS_DATA=false to keep only a one-line record of successful runs (errors always keep full data).
   saveSuccessData: env.SAVE_SUCCESS_DATA !== 'false',

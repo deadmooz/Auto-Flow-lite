@@ -60,6 +60,7 @@ before(async () => {
       }
       if (req.url === '/always-fails') { res.statusCode = 500; return res.end('{"error":"boom"}'); }
       if (req.url === '/api/tags') return res.end(JSON.stringify({ models: [{ name: 'llama3.2:latest' }, { name: 'qwen2.5:7b' }] }));
+      if (req.url === '/v1/chat/completions' && json.model === 'refuser' && json.reasoning_effort) { res.statusCode = 400; return res.end(JSON.stringify({ error: { message: '"refuser" does not support thinking' } })); }
       if (req.url === '/v1/chat/completions' && json.model === 'thinker') return res.end(JSON.stringify({ choices: [{ finish_reason: 'length', message: { role: 'assistant', content: '', reasoning: 'hmm...' } }] }));
       if (req.url === '/v1/chat/completions' && json.model === 'missing') { res.statusCode = 404; return res.end(JSON.stringify({ error: { message: "model 'missing' not found" } })); }
       if (req.url === '/v1/chat/completions') {
@@ -354,6 +355,25 @@ test('AI: Ollama works through its OpenAI-style API, needs no API key, and expla
   assert.equal(r.data.status, 'error');
   assert.match(JSON.stringify(r.data), /ollama pull missing/);
   assert.match(JSON.stringify(r.data), /Installed models: llama3\.2:latest, qwen2\.5:7b/);
+
+  // "Thinking" is off unless asked for: the model is told to answer directly (27x faster on a real thinking model), and a model that cannot switch it off still works
+  seen.length = 0;
+  r = await run([node('l', 'ai.llm', 'NoThink', { provider: 'ollama', credential: cred.data.id, model: 'llama3.2', prompt: 'hi' })]);
+  assert.equal(r.data.status, 'success', JSON.stringify(r.data));
+  assert.equal(seen.find((x) => x.url === '/v1/chat/completions').body.reasoning_effort, 'none', 'off is the default');
+  seen.length = 0;
+  r = await run([node('l', 'ai.llm', 'Think', { provider: 'ollama', credential: cred.data.id, model: 'llama3.2', prompt: 'hi', thinking: 'on' })]);
+  assert.equal(r.data.status, 'success');
+  assert.equal(seen.find((x) => x.url === '/v1/chat/completions').body.reasoning_effort, undefined, 'on sends nothing special');
+  seen.length = 0;
+  r = await run([node('l', 'ai.llm', 'Refuser', { provider: 'ollama', credential: cred.data.id, model: 'refuser', prompt: 'hi' })]);
+  assert.equal(r.data.status, 'success', `a model that cannot switch thinking off must still answer: ${JSON.stringify(r.data)}`);
+  const refuserCalls = seen.filter((x) => x.url === '/v1/chat/completions');
+  assert.equal(refuserCalls.length, 2, 'asked with the switch, then asked again without it');
+  assert.equal(refuserCalls[1].body.reasoning_effort, undefined);
+  seen.length = 0;
+  await run([node('l', 'ai.llm', 'Refuser2', { provider: 'ollama', credential: cred.data.id, model: 'refuser', prompt: 'again' })]);
+  assert.equal(seen.filter((x) => x.url === '/v1/chat/completions').length, 1, 'remembered: no second attempt for the same model');
 
   // a thinking model that runs out of tokens must not return a silent empty answer
   r = await run([node('l', 'ai.llm', 'Thinker', { provider: 'ollama', credential: cred.data.id, model: 'thinker', maxTokens: 40, prompt: 'hi' })]);

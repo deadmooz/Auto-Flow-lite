@@ -74,7 +74,7 @@ function makeSdk(manifest, dir, added) {
       if (!def?.type || !NODE_TYPE.test(def.type)) throw new Error(`Node type "${def?.type}" must look like "myplugin.hello" (letters and numbers, with a dot)`);
       if (hasNodeType(def.type)) throw new Error(`Node type "${def.type}" already exists (pick a different name)`);
       if (!def.name) throw new Error(`Node "${def.type}" needs a name`);
-      if (!def.execute && !def.executeItem) throw new Error(`Node "${def.type}" needs an executeItem() or execute() function`);
+      if (!def.execute && !def.executeItem && !(def.prepareItem && def.runPrepared)) throw new Error(`Node "${def.type}" needs an executeItem() or execute() function`);
       defineNode({ group: 'app', icon: '🧩', description: '', ...def, plugin: manifest.id });
       added.nodes.push(def.type);
     },

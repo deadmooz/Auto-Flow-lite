@@ -114,6 +114,12 @@ async function run() {
 
   await scenario('S9', '300 x list executions + 300 x list workflows', 600, async () => { for (let i = 0; i < 300; i += 1) { await api('GET', '/api/executions?limit=20', { token }); await api('GET', '/api/workflows', { token }); } });
 
+  // an upstream service that takes 100 ms per answer: the typical "one API call for every item" workflow
+  const upstream = http.createServer((q, r) => setTimeout(() => { r.setHeader('content-type', 'application/json'); r.end('{"ok":true}'); }, 100)).listen(0);
+  const s11 = await wfOf([node('g', 'data.code', 'Gen', { code: 'return Array.from({length:40},(_,i)=>({i}));' }), node('x', 'http.request', 'GET each', { method: 'GET', url: `http://127.0.0.1:${upstream.address().port}/item?i={{ $json.i }}` })], 'S11');
+  await scenario('S11', '40 items, one GET each to a 100 ms service', 40, () => runWf(s11));
+  upstream.close();
+
   await scenario('S10', 'then 25 s of doing nothing (idle pool, GC, memory trim)', 0, async () => { await sleep(25000); });
 
   mem.stop();

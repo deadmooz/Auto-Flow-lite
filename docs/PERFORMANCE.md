@@ -4,21 +4,24 @@ LiteForeFlow is meant to be light. This page says what was measured, what was ch
 
 ## Results
 
-Same workflows, same computer (Windows 11, Node 24), the median of 3 runs each, before the work (`00a8c1e`) and after.
+Same workflows, same computer (Windows 11, Node 24), the median of 3 runs each on an idle machine, before the work (`00a8c1e`) and after. The full report with real-world timings is in [QA_FINAL_REPORT.md](QA_FINAL_REPORT.md).
 
 | What it does | Before | After | Faster | Peak memory |
 |---|---|---|---|---|
-| 10,000 items, each with two plain `{{ $json.field }}` lookups | 8,463 ms | **226 ms** | **37x** | 96 → 81 MB |
-| 10,000 items through an IF block | 8,041 ms | **115 ms** | **70x** | 101 → 87 MB |
-| 3,000 items with real JavaScript in an expression (`{{ $json.v * 2 + 1 }}`) | 2,419 ms | **150 ms** | **16x** | 105 → 87 MB |
-| 2,000 items using `{{ $node["Name"].json.x }}` | 13,754 ms | **57 ms** | **241x** | 148 → 87 MB |
-| 300 small runs (3 blocks, 4 expressions each), per run | 11.4 ms | **2.4 ms** | **4.8x** | 129 → 123 MB |
-| 400 webhook calls, 8 at a time, per call | 4.8 ms | **1.1 ms** | **4.4x** | - |
-| 50,000 items through blocks without expressions (sort, unique, aggregate) | 494 ms | 471 ms | same | 145 → 138 MB |
+| 10,000 items, each with two plain `{{ $json.field }}` lookups | 7,919 ms | **174 ms** | **45x** | 96 -> 84 MB |
+| 10,000 items through an IF block | 8,029 ms | **86 ms** | **93x** | 101 -> 88 MB |
+| 3,000 items with real JavaScript in an expression | 2,396 ms | **108 ms** | **22x** | 105 -> 90 MB |
+| 2,000 items using `{{ $node["Name"].json.x }}` | 13,511 ms | **37 ms** | **365x** | 149 -> 91 MB |
+| 40 items, one GET each to a 100 ms service | 4,931 ms | **976 ms** | **5.1x** | - |
+| 300 small runs (3 blocks, 4 expressions each), per run | 11.1 ms | **1.6 ms** | **6.8x** | 136 -> 126 MB |
+| 400 webhook calls, 8 at a time, per call | 4.6 ms | **0.8 ms** | **5.8x** | - |
+| 50,000 items through blocks without expressions | 463 ms | 400 ms | 1.2x | 151 -> 138 MB |
 
-Unchanged on purpose: start-up (about 0.5 s), memory at rest (67 MB, of which 42 MB is Node.js itself and 15 MB is the web server library), and CPU while idle (0.3%, one timer an hour). After heavy work both versions return to the same 68 MB once the process has been quiet for about 25 seconds.
+Start-up: 500 ms -> **317 ms**. Memory at rest: 67 MB (42 MB of it is Node.js itself, 15 MB the web server library). CPU while idle: 0.3% (one timer an hour). After heavy work both versions return to the same memory once the process has been quiet for about 25 seconds.
 
-The first page of the editor is now **214 KB (68 KB over the wire)** instead of 402 KB (132 KB): the canvas library loads only when you open a workflow.
+First page of the editor: **214 KB (68 KB over the wire)** instead of 402 KB (132 KB).
+
+Real internet: a 16-call Hacker News digest 5.2 s -> **1.8 s**; a local AI job on a thinking model **300+ s (timed out) -> 19 s**; the whole Ollama QA suite 697 s -> **159 s**.
 
 ## What was slow, and what changed
 
@@ -30,7 +33,10 @@ Measured with a CPU profile before changing anything: **64% of the time in a sma
 4. **Shared data is no longer rebuilt for every item.** `$node[...]` and `$input` used to be re-collected and re-sent for each item (work grew with the square of the item count). They are now stored once and parsed fresh for each item only if an expression touches them, so an expression that changes them (for example `list.reverse()`) can never affect the next item. The Code block in "each item" mode had the same problem and got the same fix.
 5. **SQL statements are prepared once** instead of on every call.
 6. **Run logs use a faster compression level** (3 instead of 6: same size, 2x faster).
-7. **The editor is split in two** (the canvas loads on demand) and the built files are **served gzip-compressed** from a small in-memory cache (about 100 KB), with no extra package.
+7. **Read-only API calls overlap.** A block that calls a web service once per item (HTTP Request GET, the REST connector's GET operations) fetches up to 5 items at the same time, in order, and stops on the first failure (`ITEM_CONCURRENCY`, 1 = one by one). Settings are still read one item at a time, so the sandbox is never shared between items. The credential is opened once per node run instead of once per item.
+8. **Local AI answers directly.** The LLM and AI Agent blocks have a *Thinking* setting, off by default: a thinking model needed 124 s (and sometimes produced an empty answer) for a job that takes 4.5 s without thinking.
+9. **The run record shrinks gracefully.** Over the 1 MB limit it used to drop every block's data; now it keeps fewer items, then shorter texts and lists, so something is always there.
+10. **The editor is split in two** (the canvas loads on demand) and the built files are **served gzip-compressed** from a small in-memory cache (about 100 KB), with no extra package.
 
 ## What was measured and left alone
 

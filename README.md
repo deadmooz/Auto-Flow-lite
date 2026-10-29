@@ -42,7 +42,8 @@ To stop it, press **Ctrl+C** in the window (or just close the window).
 
 1. Install [Ollama](https://ollama.com/download), then run `ollama pull llama3.2` once (a few GB download).
 2. In a workflow add an **LLM** or **AI Agent** block and set *Provider* to **ollama**. No account, no API key and no credential are needed;
-   leave *Model* empty for `llama3.2`, or type any model you pulled (`ollama list` shows them).
+   leave *Model* empty for `llama3.2`, or choose any model you pulled from the list.
+   *Thinking* is **off** by default: many local models (qwen3, deepseek-r1) otherwise write minutes of private reasoning before a simple answer (measured: 124 s with thinking, 4.5 s without). Turn it on only for hard problems.
 3. Ollama runs on another computer? Add an **Ollama (local AI)** credential with its address, or set `OLLAMA_HOST` (see [docs/ADVANCED.md](docs/ADVANCED.md)).
 
 ## Plugins: add your own blocks
