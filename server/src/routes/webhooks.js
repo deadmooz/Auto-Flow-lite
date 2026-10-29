@@ -19,7 +19,10 @@ const BLOCKED_RESPONSE_HEADERS = new Set(['set-cookie', 'content-length', 'trans
 function sendCustomResponse(res, r) {
   const status = Number.isInteger(Number(r.status)) && Number(r.status) >= 200 && Number(r.status) <= 599 ? Number(r.status) : 200;
   for (const [k, v] of Object.entries(r.headers ?? {})) {
-    if (!BLOCKED_RESPONSE_HEADERS.has(String(k).toLowerCase()) && /^[\w-]+$/.test(k)) res.set(k, String(v));
+    const value = String(v);
+    // line breaks, control characters or a huge value would make Node refuse the whole answer: such a header is simply left out
+    if (BLOCKED_RESPONSE_HEADERS.has(String(k).toLowerCase()) || !/^[\w-]+$/.test(k) || /[\u0000-\u001f\u007f]/.test(value) || value.length > 8000) continue;
+    try { res.set(k, value); } catch { /* not a valid header: skip it */ }
   }
   res.status(status);
   if (r.body === undefined || r.body === null || r.body === '') return res.end();
@@ -49,8 +52,9 @@ webhookRouter.all('/*', async (req, res) => {
   const r = await submitExecution({ workflow: wf, mode: 'webhook', triggerNodeId: node.id, triggerItems: items }, { wait });
 
   if (!wait) return res.json({ message: 'Workflow was started', executionId: r.executionId });
-  if (r.status === 'error') return res.status(500).json({ error: r.error?.message ?? 'Workflow failed', executionId: r.executionId });
+  // A Respond to Webhook node that already ran has made its promise to the caller, even if a later step failed (the run still records the failure).
   if (params.respond === 'responseNode' && r.response) return sendCustomResponse(res, r.response);
+  if (r.status === 'error') return res.status(500).json({ error: r.error?.message ?? 'Workflow failed', executionId: r.executionId });
   const out = (r.lastOutput ?? []).map((i) => i.json);
   return res.json(out.length === 1 ? out[0] : out);
 });

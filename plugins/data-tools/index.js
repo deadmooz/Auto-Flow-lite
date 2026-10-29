@@ -13,6 +13,8 @@ const put = (obj, path, value) => {
   return out;
 };
 const opt = (value, label) => ({ value, label });
+/** JSON with the keys in a fixed order, so {a:1,b:2} and {b:2,a:1} count as the same item. */
+const stable = (v) => JSON.stringify(v, (k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((key) => [key, x[key]])) : x));
 
 export function register(sdk) {
   /* ---------------------------------- Filter ---------------------------------- */
@@ -77,7 +79,7 @@ export function register(sdk) {
       const field = ctx.rawParam('field');
       const seen = new Map();
       inputs[0].forEach((item, idx) => {
-        const k = JSON.stringify(field ? pick(item.json, field) : item.json);
+        const k = stable(field ? pick(item.json, field) : item.json);
         if (!seen.has(k) || ctx.rawParam('keep') === 'last') seen.set(k, idx);
       });
       return [[...seen.values()].sort((a, b) => a - b).map((idx) => inputs[0][idx])];
@@ -136,16 +138,22 @@ export function register(sdk) {
       const op = ctx.rawParam('operation');
       const read = async (name) => {
         const raw = await ctx.param(name, i);
-        const d = raw === '' || raw == null ? new Date() : new Date(typeof raw === 'string' && /^\d{9,13}$/.test(raw) ? Number(raw) * (raw.length <= 10 ? 1000 : 1) : raw);
+        let d;
+        if (raw === '' || raw == null) d = new Date();
+        else if (typeof raw === 'number') d = new Date(raw < 1e11 ? raw * 1000 : raw); // seconds or milliseconds
+        else if (typeof raw === 'string' && /^\d{9,13}$/.test(raw)) d = new Date(Number(raw) * (raw.length <= 10 ? 1000 : 1));
+        else d = new Date(raw);
         if (Number.isNaN(d.getTime())) throw new Error(`"${raw}" is not a date I understand. Try 2026-03-05 or 2026-03-05T14:30:00Z`);
         return d;
       };
       const tz = ctx.rawParam('timezone') || 'UTC';
+      try { new Intl.DateTimeFormat('en', { timeZone: tz }); } catch { throw new Error(`"${tz}" is not a timezone I know. Pick one from the list, for example UTC or Asia/Kolkata.`); }
       let result;
       if (op === 'now') result = formatDate(new Date(), ctx.rawParam('format'), tz);
       else if (op === 'format') result = formatDate(await read('date'), ctx.rawParam('format'), tz);
       else if (op === 'add' || op === 'subtract') {
         const n = Number(await ctx.param('amount', i)) * (op === 'add' ? 1 : -1);
+        if (!Number.isFinite(n)) throw new Error('Amount must be a number, for example 3');
         const unit = ctx.rawParam('unit');
         const base = await read('date');
         const moved = unit === 'months' ? addMonths(base, n) : unit === 'years' ? addMonths(base, n * 12) : new Date(base.getTime() + n * UNITS[unit]);
@@ -176,7 +184,9 @@ export function register(sdk) {
       const op = ctx.rawParam('operation');
       const text = op === 'uuid' || op === 'random' ? '' : String(await ctx.param('value', i) ?? '');
       let result;
-      if (op === 'hash') result = crypto.createHash(ctx.rawParam('algorithm')).update(text).digest(ctx.rawParam('encoding'));
+      const algorithm = ctx.rawParam('algorithm');
+      if ((op === 'hash' || op === 'hmac') && !['sha256', 'sha512', 'sha1', 'md5'].includes(algorithm)) throw new Error(`The algorithm "${algorithm}" is not supported. Use sha256, sha512, sha1 or md5.`);
+      if (op === 'hash') result = crypto.createHash(algorithm).update(text).digest(ctx.rawParam('encoding'));
       else if (op === 'hmac') {
         if (!ctx.rawParam('secret')) throw new Error('HMAC needs a secret');
         result = crypto.createHmac(ctx.rawParam('algorithm'), String(await ctx.param('secret', i))).update(text).digest(ctx.rawParam('encoding'));

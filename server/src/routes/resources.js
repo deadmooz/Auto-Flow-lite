@@ -45,7 +45,11 @@ catalogRouter.get('/usage', async (req, res) => res.json({ ...(await getUsage(re
 
 /* -------------------------------- credentials --------------------------------- */
 export const credentialsRouter = express.Router();
-const isSecret = (typeId, field) => getCredentialType(typeId)?.fields.find((f) => f.name === field)?.type === 'password';
+// A credential whose type is not loaded right now (for example its plugin is switched off) shows NO values: every field counts as secret.
+const isSecret = (typeId, field) => {
+  const type = getCredentialType(typeId);
+  return type ? type.fields.find((f) => f.name === field)?.type === 'password' : true;
+};
 
 credentialsRouter.get('/', async (req, res) => {
   res.json(await all('SELECT id, name, type, created_at AS "createdAt" FROM credentials WHERE workspace_id = ? ORDER BY name', req.workspaceId));

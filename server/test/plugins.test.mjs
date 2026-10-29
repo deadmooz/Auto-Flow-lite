@@ -85,6 +85,8 @@ plug('clash-test', { id: 'clash-test', name: 'Clash Test' }, `export function re
   sdk.defineNode({ type: 'crashhalf.one', name: 'One', executeItem: async () => ({}) });
   sdk.defineNode({ type: 'logic.if', name: 'Steal the IF', executeItem: async () => ({}) }); }`);
 plug('no-manifest', null, 'export function register() {}');
+plug('escape-test', { id: 'escape-test', name: 'Escape', entry: '../outside.js' }, '');
+fs.writeFileSync(path.join(EXTRA, 'outside.js'), 'export function register(sdk) { sdk.defineNode({ type: "escaped.node", name: "E", executeItem: async () => ({}) }); }');
 
 // a user's own REST service file, plus a broken one that must be skipped without hurting anything
 const svcDir = path.join(DATA, 'plugin-data', 'rest-connector', 'services');
@@ -552,4 +554,98 @@ test('data tools: date & time and crypto', async () => {
   assert.notEqual(u1, u2, 'every item gets its own UUID');
   ({ r, out } = await chain(token, [items([{}]), cr({ operation: 'random', length: 24 })]));
   assert.match(out('x')[0].result, /^[0-9a-f]{24}$/);
+});
+
+/* ============================ fixes found by the A-to-Z QA ============================ */
+
+test('QA fix: a plugin entry file outside its own folder is refused', async () => {
+  const token = await newUser();
+  const p = (await api('GET', '/api/plugins', { token })).data.find((x) => x.id === 'escape-test');
+  assert.equal(p.status, 'error');
+  assert.match(p.error, /inside the plugin folder/);
+  assert.ok(!(await api('GET', '/api/node-types', { token })).data.some((n) => n.type === 'escaped.node'));
+  assert.equal(typeof p.canManage, 'boolean', 'the page needs to know whether to grey the buttons out');
+});
+
+test('QA fix: a credential whose plugin is switched off shows no values at all', async () => {
+  const token = await newUser();
+  const boss = (await api('POST', '/api/auth/login', { body: { email: `plug${RUN}1@example.com`, password: 'password123' } })).data.token;
+  const id = (await api('POST', '/api/credentials', { token, body: { name: 'hidden', type: 'rest_mockservice', data: { token: 'tok-very-secret' } } })).data.id;
+  await api('POST', '/api/plugins/rest-connector/disable', { token: boss });
+  try {
+    const r = await api('GET', `/api/credentials/${id}`, { token });
+    assert.ok(!JSON.stringify(r.data).includes('tok-very-secret'), JSON.stringify(r.data));
+    assert.deepEqual(r.data.data, {});
+  } finally { await api('POST', '/api/plugins/rest-connector/enable', { token: boss }); }
+});
+
+test('QA fix: reload and toggle calls queue up instead of racing', async () => {
+  const boss = (await api('POST', '/api/auth/login', { body: { email: `plug${RUN}1@example.com`, password: 'password123' } })).data.token;
+  const before = (await api('GET', '/api/node-types', { token: boss })).data.length;
+  await Promise.all([
+    ...Array.from({ length: 6 }, () => api('POST', '/api/plugins/reload', { token: boss })),
+    ...Array.from({ length: 6 }, (_, i) => api('POST', `/api/plugins/data-tools/${i % 2 ? 'enable' : 'disable'}`, { token: boss })),
+  ]);
+  await api('POST', '/api/plugins/data-tools/enable', { token: boss });
+  const list = (await api('GET', '/api/plugins', { token: boss })).data;
+  assert.equal(list.filter((p) => p.status === 'error' && /already exists/.test(p.error)).length, 1, `only the deliberate clash may be in error: ${JSON.stringify(list.filter((p) => p.status === 'error').map((p) => [p.id, p.error]))}`);
+  assert.equal(list.find((p) => p.id === 'data-tools').status, 'ok');
+  assert.equal((await api('GET', '/api/node-types', { token: boss })).data.length, before);
+});
+
+test('QA fix: ".." in a path field cannot leave the endpoint', async () => {
+  const token = await newUser();
+  const c = (await api('POST', '/api/credentials', { token, body: { name: 'm', type: 'rest_mockservice', data: { token: 'tok' } } })).data.id;
+  for (const id of ['..', '.']) {
+    const { r } = await chain(token, [node('a', 'rest.mockservice', 'A', { credential: c, operation: 'getTask', getTask__id: id })]);
+    assert.equal(r.data.status, 'error');
+    assert.match(r.data.error.message, /cannot contain/);
+  }
+});
+
+test('QA fix: Respond to Webhook takes the status from an expression, keeps its promise after a later failure, and drops unsafe headers', async () => {
+  await webhook(null, `qa-status-${RUN}`, node('r', 'respond.webhook', 'Respond', { status: '{{ $json.body.code }}', send: 'text', text: 'teapot' }));
+  assert.equal((await call(`qa-status-${RUN}`, { code: 418 })).status, 418);
+
+  const t2 = await newUser();
+  const wf = await createWf(t2, 'promise', [
+    node('t', 'trigger.webhook', 'Hook', { path: `qa-promise-${RUN}`, method: 'POST', respond: 'responseNode' }),
+    node('r', 'respond.webhook', 'Respond', { status: 201, send: 'text', text: 'promised', headers: [{ name: 'X-Bad', value: 'a\r\nSet-Cookie: x=1' }, { name: 'X-Good', value: 'yes' }] }),
+    node('x', 'logic.stopAndError', 'Boom', { message: 'later failure' }),
+  ], [edge('t', 'r'), edge('r', 'x')]);
+  await api('POST', `/api/workflows/${wf.id}/activate`, { token: t2 });
+  const res = await call(`qa-promise-${RUN}`);
+  assert.equal(res.status, 201, 'the answer was already promised');
+  assert.equal(await res.text(), 'promised');
+  assert.equal(res.headers.get('x-good'), 'yes', 'the good header still goes out');
+  assert.equal(res.headers.get('set-cookie'), null);
+});
+
+test('QA fix: Remove Duplicates ignores key order; Date & Time understands JSON numbers and explains bad timezones and amounts', async () => {
+  const token = await newUser();
+  let { out } = await chain(token, [items([{ a: 1, b: 2 }, { b: 2, a: 1 }, { a: { x: 1, y: 2 } }, { a: { y: 2, x: 1 } }]), node('u', 'tools.unique', 'U', { field: '' })]);
+  assert.equal(out('u').length, 2);
+  ({ out } = await chain(token, [items([{ n: 1772721000 }, { n: 1772721000000 }]), node('d', 'tools.dateTime', 'D', { operation: 'format', date: '{{ $json.n }}', format: 'iso', outputField: 'out' })]));
+  assert.deepEqual(out('d').map((i) => i.out), ['2026-03-05T14:30:00.000Z', '2026-03-05T14:30:00.000Z']);
+  let r;
+  ({ r } = await chain(token, [items([{}]), node('d', 'tools.dateTime', 'D', { operation: 'format', date: '2026-03-05', timezone: 'Mars/Phobos' })]));
+  assert.match(r.data.error.message, /"Mars\/Phobos" is not a timezone I know/);
+  ({ r } = await chain(token, [items([{}]), node('d', 'tools.dateTime', 'D', { operation: 'add', date: '2026-03-05', amount: 'abc', unit: 'days' })]));
+  assert.match(r.data.error.message, /Amount must be a number/);
+});
+
+test('QA fix: Notion accepts a pasted link, rejects text in a number column, and a thinking-model token budget is automatic', async () => {
+  const token = await newUser();
+  const c = (await api('POST', '/api/credentials', { token, body: { name: 'n', type: 'notionApi', data: { token: 'secret_y' } } })).data.id;
+  const id32 = 'c0ffee'.repeat(5) + 'ab';
+  seen.length = 0;
+  await chain(token, [node('n', 'app.notion', 'N', { credential: c, operation: 'queryDatabase', databaseId: `https://www.notion.so/ws/Bad-Ideas-${id32}?v=${'d'.repeat(32)}` })]);
+  assert.equal(seen.find((s) => s.path.includes('/query')).path, `/v1/databases/${id32}/query`);
+  seen.length = 0;
+  await chain(token, [node('n', 'app.notion', 'N', { credential: c, operation: 'queryDatabase', databaseId: `${id32.slice(0, 8)}-${id32.slice(8, 12)}-${id32.slice(12, 16)}-${id32.slice(16, 20)}-${id32.slice(20)}` })]);
+  assert.equal(seen.find((s) => s.path.includes('/query')).path, `/v1/databases/${id32}/query`);
+  const { r } = await chain(token, [node('n', 'app.notion', 'N', { credential: c, operation: 'createPage', databaseId: 'db1', title: 'T', columns: { Score: 'abc' } })]);
+  assert.match(r.data.error.message, /"Score" needs a number, but got "abc"/);
+  const { getNodeType } = await import('../src/nodes/index.js');
+  assert.equal(getNodeType('ai.llm').properties.find((p) => p.name === 'maxTokens').default, '', 'blank means automatic');
 });

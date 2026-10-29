@@ -167,3 +167,4 @@ details.advanced > summary { cursor: pointer; font-weight: 500; margin-bottom: 8
 .plugin-card .between { justify-content: space-between; align-items: center; }
 .plugin-howto ol { padding-left: 20px; } .plugin-howto li { margin: 4px 0; }
 .row.wrap { flex-wrap: wrap; }
+.plugin-card span.chip { border: 1px solid var(--border); font-size: 12px; padding: 2px 10px; }

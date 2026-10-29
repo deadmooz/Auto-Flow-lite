@@ -93,11 +93,20 @@ const NOTION_COLUMNS = {
   phone_number: { input: 'string', send: (v) => ({ phone_number: String(v) }) },
 };
 
+/** Accepts a database id the way people actually have it: with dashes, or a whole link copied from the browser. */
+export function cleanNotionId(value) {
+  const s = String(value ?? '').trim();
+  const dashed = s.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i)?.[0].replace(/-/g, '');
+  const plain = s.match(/(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])/i)?.[0];
+  const id = dashed ?? plain;
+  return id ? id.toLowerCase() : s;
+}
+
 const schemaCache = new Map(); // "token:databaseId" -> { at, schema }; a short cache so a 500-item run asks Notion once
-async function notionSchema(token, databaseId) {
+async function notionSchema(token, databaseId, { fresh = false } = {}) {
   const k = `${token.slice(-8)}:${databaseId}`;
   const hit = schemaCache.get(k);
-  if (hit && Date.now() - hit.at < 30000) return hit.schema;
+  if (!fresh && hit && Date.now() - hit.at < 30000) return hit.schema;
   const res = await httpRequest({ url: `${config.notionUrl}/v1/databases/${databaseId}`, headers: notionHeaders(token) });
   const schema = { title: notionTitle(res.data.title), properties: res.data.properties ?? {} };
   schemaCache.set(k, { at: Date.now(), schema });
@@ -130,9 +139,9 @@ defineNode({
   },
   async loadFields(ctx) {
     const { token } = await ctx.credential();
-    const db = ctx.param('databaseId');
+    const db = cleanNotionId(ctx.param('databaseId'));
     if (!token || !db) return [];
-    const { properties } = await notionSchema(token, db);
+    const { properties } = await notionSchema(token, db, { fresh: true }); // the editor must show a column you just added in Notion
     return Object.entries(properties)
       .filter(([, p]) => NOTION_COLUMNS[p.type])
       .map(([name, p]) => ({
@@ -142,7 +151,7 @@ defineNode({
   },
   async executeItem(ctx, item, i) {
     const { token } = await ctx.credential();
-    const db = (await ctx.param('databaseId', i));
+    const db = cleanNotionId(await ctx.param('databaseId', i));
     if (!db) throw new Error('Pick a database first');
     try {
       if (ctx.rawParam('operation') === 'queryDatabase') {
@@ -160,6 +169,7 @@ defineNode({
         if (v === '' || v === undefined || v === null) continue;
         const kind = NOTION_COLUMNS[schema[name]?.type];
         if (!kind) throw new Error(`The database has no fillable column called "${name}"`);
+        if (kind.input === 'number' && !Number.isFinite(Number(v))) throw new Error(`The column "${name}" needs a number, but got "${v}"`);
         properties[name] = kind.send(v);
       }
       properties[titleName] = { title: [{ text: { content: String((await ctx.param('title', i)) ?? '') } }] };

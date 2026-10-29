@@ -6,12 +6,16 @@ import { listPlugins, loadPlugins, setPluginEnabled } from '../plugins.js';
 /** The Plugins page. Anyone signed in can look; only the person who created the first account can change anything. */
 export const pluginsRouter = express.Router();
 
+const isOwner = async (req) => (await get('SELECT id FROM users ORDER BY created_at, id LIMIT 1'))?.id === req.user.id;
+
 async function requireOwner(req) {
-  const first = await get('SELECT id FROM users ORDER BY created_at, id LIMIT 1');
-  if (first?.id !== req.user.id) throw new HttpError(403, 'Only the owner of this LiteForeFlow (the first account) can turn plugins on or off');
+  if (!(await isOwner(req))) throw new HttpError(403, 'Only the owner of this LiteForeFlow (the first account) can turn plugins on or off');
 }
 
-pluginsRouter.get('/', (req, res) => res.json(listPlugins()));
+pluginsRouter.get('/', async (req, res) => {
+  const canManage = await isOwner(req); // lets the page grey out the buttons for everyone else
+  res.json(listPlugins().map((p) => ({ ...p, canManage })));
+});
 
 pluginsRouter.post('/reload', async (req, res) => {
   await requireOwner(req);

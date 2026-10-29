@@ -28,7 +28,7 @@ export function register(sdk) {
       const rows = (await ctx.param('headers', 0)) ?? []; // {{ expressions }} in the values are already filled in
       const headers = {};
       for (const r of Array.isArray(rows) ? rows : []) if (r?.name) headers[r.name] = r.value;
-      ctx.setResponse({ status: Number(ctx.rawParam('status')) || 200, headers, body });
+      ctx.setResponse({ status: Number(await ctx.param('status', 0)) || 200, headers, body }); // the status may be an {{ expression }}
       return [inputs[0]];
     },
   });

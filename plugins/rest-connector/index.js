@@ -113,7 +113,9 @@ function registerService(sdk, spec) {
     const route = String(op.path).replace(/\{(\w+)\}/g, (m, k) => {
       const f = op.fields.find((x) => x.name === k);
       if (values[k] === undefined) throw new Error(`${f?.label || k} is required for "${op.label}"`);
-      return f?.raw ? String(values[k]).split('/').map(encodeURIComponent).join('/') : encodeURIComponent(String(values[k]));
+      const pieces = f?.raw ? String(values[k]).split('/') : [String(values[k])];
+      if (pieces.some((x) => x === '.' || x === '..')) throw new Error(`${f?.label || k} cannot contain "." or ".." parts`);
+      return pieces.map(encodeURIComponent).join('/');
     });
     applyAuth(auth, cred, headers, query);
     return { url: `${base}${route}`, headers, query, body };
@@ -126,13 +128,23 @@ function registerService(sdk, spec) {
       return (await sdk.httpRequest({ method, url, headers, query, body: method === 'GET' || !Object.keys(body).length ? undefined : body, timeoutMs: 30000, signal: ctx?.signal })).data;
     } catch (e) {
       const d = e.response?.data;
-      const said = d && typeof d === 'object' ? (d.message ?? d.error?.message ?? d.error ?? d.error_description) : (typeof d === 'string' ? d.slice(0, 160) : '');
+      const said = d && typeof d === 'object' ? (d.message ?? d.error?.message ?? d.error ?? d.error_description) : (typeof d === 'string' && !/^\s*</.test(d) ? d.slice(0, 160) : ''); // an HTML error page is not worth showing
+      if (!e.response) {
+        const host = (() => { try { return new URL(url).host; } catch { return url; } })();
+        const code = e.cause?.code;
+        if (e.name === 'TimeoutError') throw new Error(`${spec.name}: ${host} did not answer in 30 seconds`);
+        if (e.message === 'fetch failed' || code) {
+          const why = code === 'ECONNREFUSED' ? 'connection refused' : code === 'ENOTFOUND' ? 'no such address' : code === 'ECONNRESET' ? 'connection dropped' : code || 'network error';
+          throw new Error(`${spec.name}: could not connect to ${host} (${why}). Check the address and your internet connection.`);
+        }
+      }
       throw Object.assign(new Error(`${spec.name}: ${e.response ? `HTTP ${e.response.status}${said ? ` - ${typeof said === 'string' ? said : JSON.stringify(said)}` : ''}` : e.message}`), { response: e.response });
     }
   };
 
   const toRows = (data, resultPath) => {
     const picked = resultPath ? get(data, resultPath) : data;
+    if (picked === undefined || picked === null) return []; // the answer has nothing at that place: no hollow item
     const list = Array.isArray(picked) ? picked : [picked];
     return list.slice(0, 1000).map((r) => (r && typeof r === 'object' && !Array.isArray(r) ? r : { value: r }));
   };

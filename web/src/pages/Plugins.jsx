@@ -26,7 +26,7 @@ export default function Plugins() {
     <div className="page">
       <div className="page-head">
         <h1>Plugins</h1>
-        <button onClick={() => act('reload', '/plugins/reload')} disabled={busy === 'reload'} title="Look for new or changed plugin folders">{busy === 'reload' ? 'Reloading…' : '↻ Reload'}</button>
+        <button onClick={() => act('reload', '/plugins/reload')} disabled={busy === 'reload' || list?.[0]?.canManage === false} title={list?.[0]?.canManage === false ? 'Only the owner (the first account) can reload' : 'Look for new or changed plugin folders'}>{busy === 'reload' ? 'Reloading…' : '↻ Reload'}</button>
       </div>
       <p className="muted">
         Plugins add blocks (nodes) and credential types. Some come with LiteForeFlow; you can add your own by dropping a folder into
@@ -46,7 +46,7 @@ export default function Plugins() {
                   <div className="row gap">
                     <span className={`badge ${st.cls}`}>{st.label}</span>
                     {p.status !== 'error' && (
-                      <button onClick={() => act(p.id, `/plugins/${p.id}/${p.status === 'ok' ? 'disable' : 'enable'}`)} disabled={busy === p.id}>
+                      <button onClick={() => act(p.id, `/plugins/${p.id}/${p.status === 'ok' ? 'disable' : 'enable'}`)} disabled={busy === p.id || p.canManage === false} title={p.canManage === false ? 'Only the owner (the first account) can change this' : ''}>
                         {p.status === 'ok' ? 'Turn off' : 'Turn on'}
                       </button>
                     )}

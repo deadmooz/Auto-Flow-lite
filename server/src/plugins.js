@@ -120,7 +120,9 @@ async function loadOne({ dir, source, folder }, state) {
   }
   const added = { nodes: [], credentialTypes: [] };
   try {
-    const file = path.join(dir, manifest.entry);
+    const file = path.resolve(dir, manifest.entry);
+    const rel = path.relative(dir, file);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) throw new Error('The entry file must be inside the plugin folder');
     if (!fs.existsSync(file)) throw new Error(`Entry file "${manifest.entry}" is missing`);
     const mod = await import(`${pathToFileURL(file).href}?v=${Date.now()}`);
     const register = mod.register ?? mod.default;
@@ -139,8 +141,18 @@ async function loadOne({ dir, source, folder }, state) {
   }
 }
 
+// Loading, reloading and switching run one at a time, so two quick clicks can never leave a plugin half registered.
+let queue = Promise.resolve();
+const exclusive = (fn) => {
+  const run = queue.then(fn, fn);
+  queue = run.catch(() => {});
+  return run;
+};
+
 /** Finds and loads every plugin. Safe to call again (it reloads everything). */
-export async function loadPlugins() {
+export const loadPlugins = () => exclusive(loadPluginsNow);
+
+async function loadPluginsNow() {
   for (const id of [...plugins.keys()]) unload(id);
   plugins.clear();
   const state = readState();
@@ -159,7 +171,9 @@ export function listPlugins() {
   })).sort((a, b) => (a.source === b.source ? a.name.localeCompare(b.name) : a.source === 'user' ? -1 : 1));
 }
 
-export async function setPluginEnabled(id, enabled) {
+export const setPluginEnabled = (id, enabled) => exclusive(() => setEnabledNow(id, enabled));
+
+async function setEnabledNow(id, enabled) {
   const entry = plugins.get(id);
   if (!entry) throw Object.assign(new Error('Plugin not found'), { status: 404 });
   const state = readState();
@@ -167,13 +181,14 @@ export async function setPluginEnabled(id, enabled) {
   if (!enabled) state.disabled.push(id);
   writeState(state);
   if (!enabled) {
-    state.knownNodes[id] = entry.nodes.map((n) => n.type);
+    if (entry.nodes.length) state.knownNodes[id] = entry.nodes.map((n) => n.type); // never forget which blocks it had
     writeState(state);
     unload(id);
     entry.status = 'disabled';
     entry.error = '';
     return listPlugins();
   }
+  unload(id); // switching on a plugin that is already on must not register its blocks a second time
   plugins.delete(id);
   await loadOne({ dir: entry.dir, source: entry.source, folder: path.basename(entry.dir) }, state);
   writeState(state);

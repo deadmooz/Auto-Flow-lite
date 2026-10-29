@@ -177,6 +177,15 @@ await test('OLL-11', 'Thinking models and a small "Max tokens" budget', 'LLM nod
     return `40 tokens -> ${small.data.status === 'error' ? 'clear error' : 'partial answer'}; 3000 tokens -> "${show(big.out('l')[0].text, 60)}"`;
   });
 
+await test('OLL-31', 'Max tokens left blank gives a thinking model room to answer', 'LLM node on a long unusual prompt with Max tokens left empty (automatic).', 'Succeeds with a real answer; no "used all tokens" error.', async () => {
+    const filler = 'lorem ipsum '.repeat(500);
+    const r = await run(app, [llm({ maxTokens: '', prompt: `नमस्ते 🙂 ${filler}
+The secret word is BANANA. What is the secret word? Reply with one word.` })]);
+    ok(r.data.status === 'success', r.text.slice(0, 300));
+    ok(/banana/i.test(r.out('l')[0].text), `answer: ${show(r.out('l')[0].text)}`);
+    return `answered in ${(r.ms / 1000).toFixed(1)}s using ${r.out('l')[0].usage?.completion_tokens} tokens`;
+  });
+
 await test('OLL-12', 'Model that is not installed', 'LLM node with Model "no-such-model:1b".',
   'Error tells the user to run "ollama pull no-such-model:1b" and lists the installed models.', async () => {
     const r = await run(app, [llm({ model: 'no-such-model:1b', prompt: 'hi' })]);

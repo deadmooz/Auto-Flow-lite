@@ -33,7 +33,7 @@ export function LiveSelect({ typeDef, prop, values, value, onChange }) {
   if (manual || (state.loaded && !state.options.length)) {
     return (
       <div className="stack tight live-select">
-        <input value={value ?? ''} placeholder={prop.placeholder || 'Type it here'} onChange={(e) => onChange(e.target.value)} />
+        <input aria-label={prop.label} value={value ?? ''} placeholder={prop.placeholder || 'Type it here'} onChange={(e) => onChange(e.target.value)} />
         <span className="muted small">
           {state.error ? `${state.error} ` : ''}
           <button type="button" className="link-button" onClick={() => { setManual(false); setTick((t) => t + 1); }}>Try the list again</button>
@@ -44,7 +44,7 @@ export function LiveSelect({ typeDef, prop, values, value, onChange }) {
   return (
     <div className="stack tight live-select">
       <div className="row gap">
-        <select value={value ?? ''} onChange={(e) => onChange(e.target.value)} disabled={state.loading && !state.options.length}>
+        <select aria-label={prop.label} value={value ?? ''} onChange={(e) => onChange(e.target.value)} disabled={state.loading && !state.options.length}>
           <option value="">{state.loading ? 'Loading…' : prop.required ? 'Choose…' : '(none)'}</option>
           {value && !listed && <option value={value}>{value}</option>}
           {state.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -77,6 +77,15 @@ export function FieldsEditor({ typeDef, prop, values, value, onChange }) {
       .catch((e) => { if (latest.current === id) setState({ fields: [], loading: false, error: e.message }); });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, typeDef.type, prop.name, hasSource]);
+
+  // Switching to another database must not carry the old database's columns along: drop values that no longer exist.
+  useEffect(() => {
+    if (state.loading || state.error || !state.fields.length) return;
+    const known = new Set(state.fields.map((f) => f.name));
+    const stale = Object.keys(current).filter((k) => !known.has(k));
+    if (stale.length) onChange(Object.fromEntries(Object.entries(current).filter(([k]) => known.has(k))));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.fields, state.loading, state.error]);
 
   const set = (name, v) => {
     const next = { ...current };
