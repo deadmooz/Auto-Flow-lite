@@ -60,6 +60,7 @@ before(async () => {
       }
       if (req.url === '/always-fails') { res.statusCode = 500; return res.end('{"error":"boom"}'); }
       if (req.url === '/api/tags') return res.end(JSON.stringify({ models: [{ name: 'llama3.2:latest' }, { name: 'qwen2.5:7b' }] }));
+      if (req.url === '/v1/chat/completions' && json.model === 'thinker') return res.end(JSON.stringify({ choices: [{ finish_reason: 'length', message: { role: 'assistant', content: '', reasoning: 'hmm...' } }] }));
       if (req.url === '/v1/chat/completions' && json.model === 'missing') { res.statusCode = 404; return res.end(JSON.stringify({ error: { message: "model 'missing' not found" } })); }
       if (req.url === '/v1/chat/completions') {
         const hasToolResult = json.messages.some((m) => m.role === 'tool');
@@ -353,6 +354,11 @@ test('AI: Ollama works through its OpenAI-style API, needs no API key, and expla
   assert.equal(r.data.status, 'error');
   assert.match(JSON.stringify(r.data), /ollama pull missing/);
   assert.match(JSON.stringify(r.data), /Installed models: llama3\.2:latest, qwen2\.5:7b/);
+
+  // a thinking model that runs out of tokens must not return a silent empty answer
+  r = await run([node('l', 'ai.llm', 'Thinker', { provider: 'ollama', credential: cred.data.id, model: 'thinker', maxTokens: 40, prompt: 'hi' })]);
+  assert.equal(r.data.status, 'error');
+  assert.match(JSON.stringify(r.data), /Raise \\"Max tokens\\"/);
 
   // no credential at all: uses OLLAMA_HOST, which is closed in this test
   r = await run([node('l', 'ai.llm', 'Offline', { provider: 'ollama', prompt: 'hi' })]);
