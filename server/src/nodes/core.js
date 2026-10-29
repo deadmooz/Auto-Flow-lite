@@ -1,6 +1,6 @@
 import { defineNode, credentialProperty } from './registry.js';
 import { httpRequest } from '../http.js';
-import { runCode, testRegex } from '../expressions.js';
+import { runCode, testRegex, createItemCodeRunner } from '../expressions.js';
 import { config } from '../config.js';
 import { get } from '../db.js';
 import { loadCredential } from '../credentials.js';
@@ -281,11 +281,14 @@ defineNode({
     const nodesData = {};
     if (ctx.rawParam('mode') === 'eachItem') {
       const out = [];
-      for (let i = 0; i < inputs[0].length; i += 1) {
-        const { result, logs } = await runCode(code, { $json: inputs[0][i].json, $itemIndex: i, $input: { all: inputs[0].map((x) => x.json) } }, { sandbox: ctx.sandbox });
-        logs.forEach((l) => ctx.log(l));
-        if (result !== null && result !== undefined) out.push({ json: unwrap(result) });
-      }
+      const runner = createItemCodeRunner(ctx.sandbox, code, inputs[0].map((x) => x.json)); // the list is handed over once, not once per item
+      try {
+        for (let i = 0; i < inputs[0].length; i += 1) {
+          const { result, logs } = await runner.run(inputs[0][i].json, i);
+          logs.forEach((l) => ctx.log(l));
+          if (result !== null && result !== undefined) out.push({ json: unwrap(result) });
+        }
+      } finally { runner.release(); }
       return [out];
     }
     const { result, logs } = await runCode(code, { items: inputs[0].map((i) => i.json), $input: { all: inputs[0].map((i) => i.json) }, $node: nodesData }, { sandbox: ctx.sandbox });
