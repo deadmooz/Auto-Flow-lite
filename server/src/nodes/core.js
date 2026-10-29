@@ -21,7 +21,7 @@ defineNode({
   properties: [
     { name: 'path', label: 'Path', type: 'string', required: true, help: 'Served at /webhook/<path> while the workflow is active.' },
     { name: 'method', label: 'HTTP method', type: 'options', default: 'POST', options: ['ANY', 'GET', 'POST', 'PUT', 'PATCH', 'DELETE'] },
-    { name: 'respond', label: 'Respond', type: 'options', default: 'immediately', options: ['immediately', 'lastNode'], help: '"lastNode" waits for the run and returns the last node output.' },
+    { name: 'respond', label: 'Respond', type: 'options', default: 'immediately', options: ['immediately', 'lastNode', 'responseNode'], help: '"lastNode" waits for the run and returns the last node output. "responseNode" waits and sends what a "Respond to Webhook" node (plugin) sets: status, headers and body.' },
     { name: 'secret', label: 'Shared secret (optional)', type: 'string', help: 'If set, callers must send it in the x-webhook-secret header.' },
     { name: 'samplePayload', label: 'Sample payload for test runs', type: 'json', default: '{\n  "body": { "hello": "world" }\n}' },
   ],
@@ -117,7 +117,7 @@ const OPS = {
 };
 export const conditionOperators = Object.keys(OPS);
 
-async function checkConditions(conds, combine, sandbox) {
+export async function checkConditions(conds, combine, sandbox) {
   const list = Array.isArray(conds) ? conds : [];
   if (!list.length) return true;
   const test = async (c) => {

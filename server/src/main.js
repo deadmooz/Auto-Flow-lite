@@ -8,6 +8,7 @@ import { closeDb, dialect, get } from './db.js';
 import { createApp } from './app.js';
 import { initScheduler } from './scheduler.js';
 import { failInflightExecutions } from './runner.js';
+import { loadPlugins } from './plugins.js';
 
 const role = config.role;
 if (!['all', 'api', 'worker'].includes(role)) throw new Error(`LITEFOREFLOW_ROLE must be all, api or worker (got "${role}")`);
@@ -82,6 +83,7 @@ let server = null;
 let lock = null;
 
 try {
+  await loadPlugins(); // before anything can run or validate a workflow that uses a plugin's nodes
   if (role !== 'worker') {
     if (queueMode === 'memory' && dialect === 'sqlite') lock = await acquireLock();
     if (queueMode === 'memory') await failInflightExecutions(); // anything in flight died with the previous process

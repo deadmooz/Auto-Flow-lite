@@ -8,6 +8,7 @@ import Templates from './pages/Templates.jsx';
 import Executions from './pages/Executions.jsx';
 import Credentials from './pages/Credentials.jsx';
 import Settings from './pages/Settings.jsx';
+import Plugins from './pages/Plugins.jsx';
 
 const Session = createContext(null);
 export const useSession = () => useContext(Session);
@@ -67,6 +68,7 @@ function Shell() {
           <NavLink to="/templates">Templates</NavLink>
           <NavLink to="/executions">Executions</NavLink>
           <NavLink to="/credentials">Credentials</NavLink>
+          <NavLink to="/plugins">Plugins</NavLink>
           <NavLink to="/settings">Usage &amp; plan</NavLink>
         </nav>
         <div className="sidebar-foot">
@@ -86,6 +88,7 @@ function Shell() {
           <Route path="/templates" element={<Templates />} />
           <Route path="/executions" element={<Executions />} />
           <Route path="/credentials" element={<Credentials />} />
+          <Route path="/plugins" element={<Plugins />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
