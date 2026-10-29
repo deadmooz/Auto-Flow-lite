@@ -66,6 +66,12 @@ function applyAuth(auth, cred, headers, query) {
   }
 }
 
+/** The human reason inside a service's error answer: {message}, {error:{message}}, {error:"..."}, {reason}, {detail}, {errors:[{message}]} ... */
+export function reasonOf(d) {
+  const text = (v) => (typeof v === 'string' && v.trim() ? v : null);
+  return text(d.message) ?? text(d.error?.message) ?? text(d.reason) ?? text(d.detail) ?? text(d.error_description) ?? text(d.error) ?? text(d.errors?.[0]?.message) ?? text(d.errors?.[0]) ?? '';
+}
+
 export function register(sdk) {
   const dirs = [path.join(sdk.pluginDir, 'services'), path.join(sdk.dataDir(), 'services')];
   const files = dirs.flatMap((d) => { try { return fs.readdirSync(d).filter((f) => f.endsWith('.json') && !f.startsWith('_')).map((f) => path.join(d, f)); } catch { return []; } });
@@ -121,14 +127,20 @@ function registerService(sdk, spec) {
     return { url: `${base}${route}`, headers, query, body };
   };
 
-  const call = async (cred, op, valueOf, ctx) => {
+  const buildRequest = (cred, op, valueOf) => {
     const { url, headers, query, body } = prepare(cred, op, valueOf);
     const method = op.method ?? 'GET';
+    return { method, url, headers, query, body: method === 'GET' || !Object.keys(body).length ? undefined : body };
+  };
+
+  /** Sends one prepared request and turns a failure into a plain sentence. */
+  const send = async (req, signal) => {
+    const { method, url, headers, query, body } = req;
     try {
-      return (await sdk.httpRequest({ method, url, headers, query, body: method === 'GET' || !Object.keys(body).length ? undefined : body, timeoutMs: 30000, signal: ctx?.signal })).data;
+      return (await sdk.httpRequest({ method, url, headers, query, body, timeoutMs: 30000, signal })).data;
     } catch (e) {
       const d = e.response?.data;
-      const said = d && typeof d === 'object' ? (d.message ?? d.error?.message ?? d.error ?? d.error_description) : (typeof d === 'string' && !/^\s*</.test(d) ? d.slice(0, 160) : ''); // an HTML error page is not worth showing
+      const said = d && typeof d === 'object' ? reasonOf(d) : (typeof d === 'string' && !/^\s*</.test(d) ? d.slice(0, 160) : ''); // an HTML error page is not worth showing
       if (!e.response) {
         const host = (() => { try { return new URL(url).host; } catch { return url; } })();
         const code = e.cause?.code;
@@ -141,6 +153,8 @@ function registerService(sdk, spec) {
       throw Object.assign(new Error(`${spec.name}: ${e.response ? `HTTP ${e.response.status}${said ? ` - ${typeof said === 'string' ? said : JSON.stringify(said)}` : ''}` : e.message}`), { response: e.response });
     }
   };
+
+  const call = (cred, op, valueOf, ctx) => send(buildRequest(cred, op, valueOf), ctx?.signal);
 
   const toRows = (data, resultPath) => {
     const picked = resultPath ? get(data, resultPath) : data;
@@ -185,15 +199,22 @@ function registerService(sdk, spec) {
     type: `rest.${spec.id}`, name: spec.name, group: 'app', icon: spec.icon || '🔌', description: spec.description || `Use ${spec.name} (REST).`,
     ...(credProp ? { credentialType: credType } : {}),
     properties: props,
-    async executeItem(ctx, item, i) {
+    // Two steps: settings are read one item at a time, then read-only (GET) calls wait for the service several at a time.
+    concurrency: 5,
+    parallelSafe: (p) => p.req.method === 'GET',
+    async prepareItem(ctx, item, i) {
       const op = spec.operations.find((o) => o.id === ctx.rawParam('operation'));
       if (!op) throw new Error('Pick what to do');
-      const cred = credProp ? await ctx.credential() : {};
+      ctx.scratch.cred ??= credProp ? ctx.credential() : Promise.resolve({}); // the credential is opened once per node run
+      const cred = await ctx.scratch.cred;
       const values = {};
       for (const f of op.fields ?? []) values[f.name] = await ctx.param(key(op, f), i);
-      const data = await call(cred, op, (f) => values[f.name], ctx);
+      return { op, req: buildRequest(cred, op, (f) => values[f.name]) };
+    },
+    async runPrepared(ctx, p) {
+      const data = await send(p.req, ctx.signal);
       if (data === '' || data === undefined || data === null) return { ok: true };
-      return toRows(data, op.result);
+      return toRows(data, p.op.result);
     },
     async loadOptions(ctx, propName) {
       const op = spec.operations.find((o) => propName.startsWith(`${o.id}__`));

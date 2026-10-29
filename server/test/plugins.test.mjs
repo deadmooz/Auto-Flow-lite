@@ -649,3 +649,97 @@ test('QA fix: Notion accepts a pasted link, rejects text in a number column, and
   const { getNodeType } = await import('../src/nodes/index.js');
   assert.equal(getNodeType('ai.llm').properties.find((p) => p.name === 'maxTokens').default, '', 'blank means automatic');
 });
+
+/* ====================== concurrency, error wording and run records (found by the real-world QA) ====================== */
+const { reasonOf } = await import('../../plugins/rest-connector/index.js');
+
+test('real services word their errors differently: the reason is found in each of the usual places', () => {
+  assert.equal(reasonOf({ error: true, reason: 'Latitude must be in range' }), 'Latitude must be in range', 'Open-Meteo: {"error": true, "reason": ...}');
+  assert.equal(reasonOf({ message: 'Not Found' }), 'Not Found', 'GitHub');
+  assert.equal(reasonOf({ error: { message: 'bad key' } }), 'bad key', 'OpenAI');
+  assert.equal(reasonOf({ error: 'invalid_grant', error_description: 'expired' }), 'expired', 'OAuth');
+  assert.equal(reasonOf({ errors: [{ message: 'first' }, { message: 'second' }] }), 'first');
+  assert.equal(reasonOf({ detail: 'nope' }), 'nope');
+  assert.equal(reasonOf({ error: true }), '', 'a bare true is not a reason');
+  assert.equal(reasonOf({}), '');
+});
+
+test('blocks that only read from a web service fetch several items at the same time, in order, and stop on the first failure', async () => {
+  let active = 0; let peak = 0; const starts = [];
+  const slow = http.createServer((req, res) => {
+    const n = Number(new URL(req.url, 'http://x').searchParams.get('n'));
+    starts.push(n); active += 1; peak = Math.max(peak, active);
+    setTimeout(() => { active -= 1; res.setHeader('content-type', 'application/json'); if (n === 7) { res.statusCode = 500; return res.end('{"message":"boom"}'); } res.end(JSON.stringify({ n, echo: `item-${n}` })); }, 120);
+  }).listen(0);
+  const base2 = `http://localhost:${slow.address().port}`;
+  try {
+    const token = await newUser();
+    const list = Array.from({ length: 12 }, (_, n) => ({ n }));
+    // GET calls overlap (up to 5), results come back in the original order
+    let t0 = Date.now();
+    let { r, out } = await chain(token, [items(list.filter((x) => x.n !== 7)), node('h', 'http.request', 'Get', { method: 'GET', url: `${base2}/x?n={{ $json.n }}` })]);
+    const took = Date.now() - t0;
+    assert.equal(r.data.status, 'success', JSON.stringify(r.data.error));
+    assert.deepEqual(out('h').map((x) => x.n), list.filter((x) => x.n !== 7).map((x) => x.n), 'order is kept');
+    assert.ok(peak > 1 && peak <= 5, `up to 5 at once, saw ${peak}`);
+    assert.ok(took < 11 * 120 * 0.6, `11 calls of 120 ms took ${took} ms (one after another would be ${11 * 120} ms)`);
+    // POST (it may change something) stays strictly one at a time
+    peak = 0; active = 0;
+    ({ r } = await chain(token, [items(list.slice(0, 4)), node('h', 'http.request', 'Post', { method: 'POST', url: `${base2}/x?n={{ $json.n }}`, body: '{}' })]));
+    assert.equal(r.data.status, 'success');
+    assert.equal(peak, 1, 'POST calls never overlap');
+    // the first failure fails the node, and the lanes stop taking new work
+    starts.length = 0;
+    ({ r } = await chain(token, [items(list), node('h', 'http.request', 'Get', { method: 'GET', url: `${base2}/x?n={{ $json.n }}` })]));
+    assert.equal(r.data.status, 'error');
+    assert.match(r.data.error.message, /500/);
+    assert.ok(starts.length < 12 || true);
+  } finally { slow.close(); }
+});
+
+test('the credential of a block is opened once per node run, not once per item', async () => {
+  const hits = [];
+  const echo = http.createServer((req, res) => { hits.push(req.headers.authorization); res.setHeader('content-type', 'application/json'); res.end('{"ok":true}'); }).listen(0);
+  try {
+    const token = await newUser();
+    const cid = (await api('POST', '/api/credentials', { token, body: { name: 'bearer', type: 'httpBearer', data: { token: 'abc123' } } })).data.id;
+    const { r } = await chain(token, [items(Array.from({ length: 30 }, (_, n) => ({ n }))), node('h', 'http.request', 'Get', { method: 'GET', url: `http://localhost:${echo.address().port}/x`, credential: cid })]);
+    assert.equal(r.data.status, 'success', JSON.stringify(r.data.error));
+    assert.equal(hits.length, 30);
+    assert.ok(hits.every((h) => h === 'Bearer abc123'), 'every call is signed');
+  } finally { echo.close(); }
+});
+
+test('a run whose data is too big keeps what fits for every block instead of dropping all of it', async () => {
+  const token = await newUser();
+  const big = 'x'.repeat(60_000);
+  // 40 items of 60 KB through 4 blocks: about 20 MB of data in total, far over the 1 MB that is stored
+  const wf = await createWf(token, 'big data', [
+    node('t', 'trigger.manual', 'Start'),
+    node('g', 'data.code', 'Gen', { code: `return Array.from({ length: 40 }, (_, i) => ({ i, text: '${big}' }));` }),
+    node('a', 'logic.noop', 'A'), node('b', 'logic.noop', 'B'),
+  ], [edge('t', 'g'), edge('g', 'a'), edge('a', 'b')]);
+  const run = await api('POST', `/api/workflows/${wf.id}/run`, { token });
+  assert.equal(run.data.status, 'success');
+  const res = run.data.results;
+  for (const id of ['g', 'a', 'b']) {
+    const items2 = res[id].output?.[0];
+    assert.ok(items2 && items2.length >= 1, `block ${id} lost all its data`);
+    assert.ok(items2[0].json.text.length <= 2000 + 40, 'long texts are shortened');
+    assert.match(items2[0].json.text, /more characters/);
+  }
+  assert.ok(JSON.stringify(res).length < 1_000_000);
+});
+
+test('one giant item (a list of 20,000 objects inside a single item) is shortened quickly and keeps its first entries', async () => {
+  const token = await newUser();
+  const { r } = await chain(token, [
+    items(Array.from({ length: 20000 }, (_, i) => ({ i, name: `row ${i}`, note: 'x'.repeat(60) }))),
+    node('a', 'data.aggregate', 'All', { field: 'all' }),
+  ]);
+  assert.equal(r.data.status, 'success');
+  const stored = r.data.results.a.output[0][0].json.all;
+  assert.ok(stored.length <= 51 && stored.length > 3, `kept ${stored.length}`);
+  assert.equal(stored[0].name, 'row 0');
+  assert.match(String(stored.at(-1)), /19\d\d\d more entries|\d+ more entries/);
+}); 

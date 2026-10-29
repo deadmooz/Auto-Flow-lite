@@ -1,8 +1,9 @@
-import { createResolver } from './expressions.js';
+import { createNodeEvaluator } from './expressions.js';
 import { Sandbox } from './sandbox.js';
 import { getNodeType, withDefaults } from './nodes/index.js';
 import { loadCredential } from './credentials.js';
 import { pluginForMissingType } from './plugins.js';
+import { config } from './config.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
@@ -165,44 +166,33 @@ export async function runWorkflow(opts) {
 
       const params = withDefaults(type, node.parameters);
       const logs = [];
-      const sandbox = new Sandbox(); // one V8 isolate per node run, shared by all of its items
-      const resolvers = new Map();
-      const resolverFor = (i) => {
-        if (!resolvers.has(i)) {
-          // Items are processed in order; keep only a few live V8 contexts so thousands of items fit the isolate's memory cap.
-          if (resolvers.size >= 4) {
-            const [oldest] = resolvers.keys();
-            resolvers.get(oldest).release();
-            resolvers.delete(oldest);
-          }
+      const sandbox = new Sandbox(); // borrows a pooled V8 isolate on first use; given back by dispose()
+      // One evaluator per node run: plain lookups never touch the sandbox, everything else shares one context, and the costly
+      // shared data ($node, $input) is built once, not once per item.
+      const evaluator = createNodeEvaluator({
+        baseFn: (i) => {
           const item = inputs[0][i] ?? inputs[0][0];
-          resolvers.set(i, createResolver(
-            () => ({
-              $json: item?.json ?? {}, $itemIndex: i, $workflow: { id: workflow.id, name: workflow.name },
-              $now: new Date().toISOString(),
-            }),
-            () => ({ $node: nodesData(), $input: { all: inputs[0].map((x) => x.json) } }),
-            sandbox,
-          ));
-        }
-        return resolvers.get(i);
-      };
+          return { $json: item?.json ?? {}, $itemIndex: i, $workflow: { id: workflow.id, name: workflow.name }, $now: new Date().toISOString() };
+        },
+        extraFn: () => ({ $node: nodesData(), $input: { all: inputs[0].map((x) => x.json) } }),
+        sandbox,
+      });
 
       const ctx = {
         node, inputs, staticData, workspaceId, depth, sandbox, signal: abort.signal,
+        scratch: {}, // a place for a block to remember things (a loaded credential) for the length of this node run
         workflow: { id: workflow.id, name: workflow.name },
         rawParam: (name) => params[name],
-        param: (name, i = 0) => resolverFor(i).resolve(params[name]),
+        param: (name, i = 0) => evaluator.resolve(params[name], i),
         /** Parses a JSON-typed parameter, resolving {{ expressions }} (inside or outside of strings). */
         jsonParam: async (name, i = 0) => {
           const raw = params[name];
           if (raw === undefined || raw === null || raw === '') return undefined;
-          const r = resolverFor(i);
-          if (typeof raw !== 'string') return r.resolve(raw);
+          if (typeof raw !== 'string') return evaluator.resolve(raw, i);
           let parsed;
           try { parsed = JSON.parse(raw); } catch { parsed = undefined; }
-          if (parsed !== undefined) return r.resolve(parsed);
-          const resolved = await r.resolve(raw);
+          if (parsed !== undefined) return evaluator.resolve(parsed, i);
+          const resolved = await evaluator.resolve(raw, i);
           if (typeof resolved !== 'string') return resolved;
           try { return JSON.parse(resolved); } catch { throw new Error(`"${name}" is not valid JSON`); }
         },
@@ -237,6 +227,7 @@ export async function runWorkflow(opts) {
           if (tries < maxTries) await Promise.race([sleep(waitMs), timedOut]).catch(() => {});
         }
       }
+      evaluator.release();
       sandbox.dispose();
       const base = { input: inputs, durationMs: Date.now() - t0, tries, logs: logs.length ? logs : undefined };
 
@@ -263,6 +254,32 @@ export async function runWorkflow(opts) {
 }
 
 async function executeNode(type, ctx, inputs) {
+  if (type.prepareItem) {
+    // Settings are read one item at a time (they may need the expression engine); only the waiting for the web service overlaps.
+    const items = inputs[0];
+    const prepared = [];
+    for (let i = 0; i < items.length; i += 1) prepared.push(await type.prepareItem(ctx, items[i], i));
+    const lanes = type.concurrency > 1 && prepared.length > 1 && prepared.every((p) => type.parallelSafe?.(p))
+      ? Math.min(type.concurrency, config.itemConcurrency, prepared.length) : 1;
+    const results = new Array(prepared.length);
+    let next = 0;
+    let failed = false;
+    const lane = async () => {
+      while (!failed) {
+        const i = next;
+        next += 1;
+        if (i >= prepared.length) return;
+        try { results[i] = await type.runPrepared(ctx, prepared[i], i); } catch (e) { failed = true; throw e; } // the others stop taking new work
+      }
+    };
+    await Promise.all(Array.from({ length: lanes }, lane));
+    const out = [];
+    results.forEach((r, i) => {
+      if (r === null || r === undefined) return;
+      for (const o of Array.isArray(r) ? r : [r]) out.push({ json: o, pairedItem: i });
+    });
+    return [out];
+  }
   if (type.executeItem) {
     const out = [];
     for (let i = 0; i < inputs[0].length; i += 1) {

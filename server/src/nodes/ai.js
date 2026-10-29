@@ -17,6 +17,11 @@ const providerProps = [
     help: 'Optional for Ollama: leave it empty to use Ollama on this computer.',
   },
   {
+    name: 'thinking', label: 'Thinking (Ollama models that can think)', type: 'options', default: 'off', showIf: { provider: 'ollama' },
+    options: [{ value: 'off', label: 'Off - much faster, right for most automations' }, { value: 'on', label: 'On - slower, for hard problems' }],
+    help: 'Some local models (qwen3, deepseek-r1 ...) write a long private reasoning before they answer. Measured: the same small JSON job took 124 s thinking and 4.5 s without.',
+  },
+  {
     name: 'model', label: 'Model', type: 'string', default: '', placeholder: 'blank = provider default (Ollama: llama3.2)',
     dynamic: true, dynamicIf: { provider: 'ollama' }, help: 'With Ollama this is a list of the models installed on your computer.',
   },
@@ -57,17 +62,27 @@ async function openaiChat(cred, body) {
 }
 
 /** Ollama speaks the OpenAI chat format under /v1, so it shares the message and tool-call handling with "openai". */
+const noThinkRefused = new Set(); // models that answered "I cannot switch thinking off": do not ask again
+
 async function ollamaChat(cred, body) {
   const origin = (cred.baseUrl || config.ollamaUrl).replace(/\/$/, '');
   const model = body.model;
   let res;
+  const send = (payload) => httpRequest({
+    method: 'POST', url: `${origin}/v1/chat/completions`, body: payload, ignoreStatus: true,
+    headers: cred.apiKey ? { authorization: `Bearer ${cred.apiKey}` } : {},
+    timeoutMs: 300000, // the first reply can be slow while a big model loads into memory
+    trustedOrigin: config.ollamaUrl,
+  });
   try {
-    res = await httpRequest({
-      method: 'POST', url: `${origin}/v1/chat/completions`, body, ignoreStatus: true,
-      headers: cred.apiKey ? { authorization: `Bearer ${cred.apiKey}` } : {},
-      timeoutMs: 300000, // the first reply can be slow while a big model loads into memory
-      trustedOrigin: config.ollamaUrl,
-    });
+    const { thinking, ...payload } = body;
+    if (thinking === 'off' && !noThinkRefused.has(model)) payload.reasoning_effort = 'none'; // the OpenAI-style way to say "answer directly"
+    res = await send(payload);
+    if (!res.ok && payload.reasoning_effort && /think|reasoning/i.test(String(res.data?.error?.message ?? res.data?.error ?? ''))) {
+      noThinkRefused.add(model);
+      delete payload.reasoning_effort;
+      res = await send(payload); // an older Ollama or a model without that switch: just ask normally
+    }
   } catch (e) {
     if (e.name === 'TimeoutError') throw new Error(`Ollama did not answer within 5 minutes. The model "${model}" may be too big for this computer; try a smaller one.`);
     if (e.message === 'fetch failed') throw new Error(`Could not reach Ollama at ${origin}. Is it running? Open the Ollama app (or run "ollama serve"), or set the address in the credential.`);
@@ -102,7 +117,7 @@ async function anthropicMessages(cred, body) {
   return res.data;
 }
 
-async function complete({ provider, cred, model, system, prompt, temperature, maxTokens }) {
+async function complete({ provider, cred, model, system, prompt, temperature, maxTokens, thinking }) {
   model = model || DEFAULT_MODEL[provider];
   if (provider === 'anthropic') {
     const d = await anthropicMessages(cred, {
@@ -111,7 +126,7 @@ async function complete({ provider, cred, model, system, prompt, temperature, ma
     return { text: (d.content ?? []).filter((b) => b.type === 'text').map((b) => b.text).join(''), model: d.model, usage: d.usage };
   }
   const messages = [...(system ? [{ role: 'system', content: system }] : []), { role: 'user', content: prompt }];
-  const d = await chatFor(provider)(cred, { model, messages, temperature, max_tokens: maxTokens });
+  const d = await chatFor(provider)(cred, { model, messages, temperature, max_tokens: maxTokens, ...(provider === 'ollama' ? { thinking } : {}) });
   const choice = d.choices?.[0];
   const text = choice?.message?.content ?? '';
   // "Thinking" models (for example qwen3, deepseek-r1) count their private reasoning against Max tokens; a small budget leaves no room for the answer.
@@ -138,7 +153,7 @@ defineNode({
     const cred = await loadProviderCredential(ctx, provider);
     const out = await complete({
       provider, cred, model: (await ctx.param('model', i)), system: (await ctx.param('system', i)), prompt: (await ctx.param('prompt', i)),
-      temperature: Number((await ctx.param('temperature', i))), maxTokens: Number((await ctx.param('maxTokens', i))) || (provider === 'ollama' ? 4000 : 1024),
+      temperature: Number((await ctx.param('temperature', i))), maxTokens: Number((await ctx.param('maxTokens', i))) || (provider === 'ollama' ? 4000 : 1024), thinking: ctx.rawParam('thinking'),
     });
     if (ctx.rawParam('parseJson')) {
       const m = out.text.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -182,7 +197,7 @@ async function runTool(name, input) {
   try { return await t.run(input ?? {}); } catch (e) { return `Error: ${e.message}`; }
 }
 
-async function runAgent({ provider, cred, model, system, prompt, tools, maxSteps, temperature }) {
+async function runAgent({ provider, cred, model, system, prompt, tools, maxSteps, temperature, thinking }) {
   model = model || DEFAULT_MODEL[provider];
   const steps = [];
   const active = tools.filter((t) => TOOLS[t]);
@@ -213,7 +228,7 @@ async function runAgent({ provider, cred, model, system, prompt, tools, maxSteps
   const messages = [...(system ? [{ role: 'system', content: system }] : []), { role: 'user', content: prompt }];
   const toolDefs = active.map((n) => ({ type: 'function', function: { name: n, description: TOOLS[n].description, parameters: TOOLS[n].schema } }));
   for (let s = 0; s < maxSteps; s += 1) {
-    const d = await chatFor(provider)(cred, { model, messages, temperature, ...(toolDefs.length ? { tools: toolDefs } : {}) });
+    const d = await chatFor(provider)(cred, { model, messages, temperature, ...(toolDefs.length ? { tools: toolDefs } : {}), ...(provider === 'ollama' ? { thinking } : {}) });
     const msg = d.choices?.[0]?.message ?? {};
     if (!msg.tool_calls?.length) return { text: msg.content ?? '', steps };
     messages.push(msg);
@@ -247,7 +262,7 @@ defineNode({
     if (!Array.isArray(tools)) throw new Error('Tools must be a JSON array of tool names');
     return runAgent({
       provider, cred, model: (await ctx.param('model', i)), system: (await ctx.param('system', i)), prompt: (await ctx.param('prompt', i)),
-      tools, maxSteps: Math.min(10, Math.max(1, Number(ctx.rawParam('maxSteps')) || 5)), temperature: Number((await ctx.param('temperature', i))),
+      tools, maxSteps: Math.min(10, Math.max(1, Number(ctx.rawParam('maxSteps')) || 5)), temperature: Number((await ctx.param('temperature', i))), thinking: ctx.rawParam('thinking'),
     });
   },
 });

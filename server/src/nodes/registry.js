@@ -4,6 +4,11 @@
  *     properties: [{ name, label, type, default, options?, showIf?, required?, placeholder?, help? }],
  *     executeItem(ctx, item, i)  -> object | object[] | null     (runs once per input item)
  *     execute(ctx, inputs)       -> items[][]                    (full control, one array per output)
+ *   or, for blocks that wait on a web service for every item, two steps so several items can be fetched at the same time:
+ *     prepareItem(ctx, item, i)  -> request                      (one item at a time: reads settings, may use {{ expressions }})
+ *     runPrepared(ctx, request, i) -> object | object[] | null   (the waiting part)
+ *     parallelSafe(request)      -> boolean                      (true for read-only calls; only then do items overlap)
+ *     concurrency                -> how many may overlap (capped by the server's ITEM_CONCURRENCY, default 5)
  *   }
  * Property types: string | text | number | boolean | options | json | code | keyvalue | conditions | schedule | timezone
  *   | fields   (one input per column the service reports; the node needs loadFields)
@@ -31,7 +36,7 @@ export function removePluginNodes(pluginId) {
 /** JSON-safe description of every node type, for the editor palette. */
 export function listNodeTypes() {
   // eslint-disable-next-line no-unused-vars
-  return [...registry.values()].map(({ execute, executeItem, loadOptions, loadFields, ...pub }) => pub);
+  return [...registry.values()].map(({ execute, executeItem, prepareItem, runPrepared, parallelSafe, loadOptions, loadFields, ...pub }) => pub);
 }
 
 export function withDefaults(def, parameters = {}) {

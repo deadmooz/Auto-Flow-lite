@@ -122,6 +122,22 @@ export function register(sdk) {
 | `ctx.setResponse({ status, headers, body })` | Sets the answer to the webhook that started the run |
 | `ctx.signal` | Aborts when the workflow times out |
 
+### Blocks that wait on a web service for every item
+
+If a block calls an API once per item, write it in two steps and several items can be fetched at the same time (up to `ITEM_CONCURRENCY`, default 5), in order:
+
+```js
+sdk.defineNode({
+  type: 'myplugin.lookup', name: 'Look up', properties: [/* ... */],
+  concurrency: 5,
+  parallelSafe: (request) => request.method === 'GET',          // only read-only calls overlap
+  async prepareItem(ctx, item, i) { return { method: 'GET', url: await ctx.param('url', i) }; },   // one item at a time (may use {{ expressions }})
+  async runPrepared(ctx, request) { return (await sdk.httpRequest({ url: request.url })).data; },  // the waiting part
+});
+```
+
+`ctx.scratch` is an object that lives for one node run: use it to open a credential once instead of once per item.
+
 ### The `sdk` object
 
 `sdk.defineNode(def)`, `sdk.defineCredentialType({ id, name, fields, setup?, test? })`, `sdk.credentialProperty(typeId)` (the "pick a credential" setting),

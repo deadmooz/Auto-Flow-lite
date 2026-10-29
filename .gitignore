@@ -11,3 +11,6 @@ coverage
 server/test/qa/*-results.json
 QA_REPORT.md
 runtime
+
+# benchmark output (numbers worth keeping are in docs/PERFORMANCE.md)
+server/test/bench/result-*.json
