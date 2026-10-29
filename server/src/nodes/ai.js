@@ -2,15 +2,29 @@ import { defineNode } from './registry.js';
 import { httpRequest } from '../http.js';
 import { loadCredential } from '../credentials.js';
 import { runCode } from '../expressions.js';
+import { config } from '../config.js';
 
-const CRED_BY_PROVIDER = { openai: 'openaiApi', anthropic: 'anthropicApi' };
-const DEFAULT_MODEL = { openai: 'gpt-4o-mini', anthropic: 'claude-haiku-5-5' };
+const CRED_BY_PROVIDER = { openai: 'openaiApi', anthropic: 'anthropicApi', ollama: 'ollamaApi' };
+const DEFAULT_MODEL = { openai: 'gpt-4o-mini', anthropic: 'claude-haiku-5-5', ollama: 'llama3.2' };
 
 const providerProps = [
-  { name: 'provider', label: 'Provider', type: 'options', default: 'openai', options: ['openai', 'anthropic'], help: 'Choose "openai" with a custom Base URL for any OpenAI-compatible API (Groq, Together, Ollama, …).' },
-  { name: 'credential', label: 'Credential', type: 'credential', credentialTypeBy: { param: 'provider', map: CRED_BY_PROVIDER }, required: true },
-  { name: 'model', label: 'Model', type: 'string', default: '', placeholder: 'blank = provider default' },
+  {
+    name: 'provider', label: 'Provider', type: 'options', default: 'openai', options: ['openai', 'anthropic', 'ollama'],
+    help: 'Choose "ollama" to run a model on your own computer for free (install Ollama, then "ollama pull llama3.2"). Choose "openai" with a custom Base URL for any other OpenAI-compatible API (Groq, Together, …).',
+  },
+  {
+    name: 'credential', label: 'Credential', type: 'credential', credentialTypeBy: { param: 'provider', map: CRED_BY_PROVIDER },
+    help: 'Optional for Ollama: leave it empty to use Ollama on this computer.',
+  },
+  { name: 'model', label: 'Model', type: 'string', default: '', placeholder: 'blank = provider default (Ollama: llama3.2)' },
 ];
+
+/** Loads the node's credential; Ollama works without one (it talks to the local server). */
+async function loadProviderCredential(ctx, provider) {
+  const id = ctx.rawParam('credential');
+  if (provider === 'ollama' && !id) return {};
+  return loadCredential(ctx.workspaceId, id, CRED_BY_PROVIDER[provider]);
+}
 
 /* ---- provider calls ---- */
 
@@ -21,6 +35,43 @@ async function openaiChat(cred, body) {
   });
   return res.data;
 }
+
+/** Ollama speaks the OpenAI chat format under /v1, so it shares the message and tool-call handling with "openai". */
+async function ollamaChat(cred, body) {
+  const origin = (cred.baseUrl || config.ollamaUrl).replace(/\/$/, '');
+  const model = body.model;
+  let res;
+  try {
+    res = await httpRequest({
+      method: 'POST', url: `${origin}/v1/chat/completions`, body, ignoreStatus: true,
+      headers: cred.apiKey ? { authorization: `Bearer ${cred.apiKey}` } : {},
+      timeoutMs: 300000, // the first reply can be slow while a big model loads into memory
+      trustedOrigin: config.ollamaUrl,
+    });
+  } catch (e) {
+    if (e.name === 'TimeoutError') throw new Error(`Ollama did not answer within 5 minutes. The model "${model}" may be too big for this computer; try a smaller one.`);
+    if (e.message === 'fetch failed') throw new Error(`Could not reach Ollama at ${origin}. Is it running? Open the Ollama app (or run "ollama serve"), or set the address in the credential.`);
+    throw e;
+  }
+  if (res.ok) return res.data;
+
+  const detail = String(res.data?.error?.message ?? res.data?.error ?? res.data ?? '').slice(0, 300);
+  if (res.status === 404 && /not found/i.test(detail)) {
+    let have = '';
+    try {
+      const tags = await httpRequest({ url: `${origin}/api/tags`, timeoutMs: 5000, trustedOrigin: config.ollamaUrl });
+      const names = (tags.data?.models ?? []).map((m) => m.name);
+      have = names.length ? ` Installed models: ${names.join(', ')}.` : ' No models are installed yet.';
+    } catch { /* the hint is a bonus */ }
+    throw new Error(`Ollama does not have the model "${model}". Install it with:  ollama pull ${model}.${have}`);
+  }
+  if (/does not support tools/i.test(detail)) {
+    throw new Error(`The Ollama model "${model}" cannot use tools. Pick a tool-capable one (for example llama3.2 or qwen2.5), or set Tools to [].`);
+  }
+  throw new Error(`Ollama error (HTTP ${res.status}): ${detail || 'no details'}`);
+}
+
+const chatFor = (provider) => (provider === 'ollama' ? ollamaChat : openaiChat);
 
 async function anthropicMessages(cred, body) {
   const base = (cred.baseUrl || 'https://api.anthropic.com').replace(/\/$/, '');
@@ -40,13 +91,13 @@ async function complete({ provider, cred, model, system, prompt, temperature, ma
     return { text: (d.content ?? []).filter((b) => b.type === 'text').map((b) => b.text).join(''), model: d.model, usage: d.usage };
   }
   const messages = [...(system ? [{ role: 'system', content: system }] : []), { role: 'user', content: prompt }];
-  const d = await openaiChat(cred, { model, messages, temperature, max_tokens: maxTokens });
+  const d = await chatFor(provider)(cred, { model, messages, temperature, max_tokens: maxTokens });
   return { text: d.choices?.[0]?.message?.content ?? '', model: d.model, usage: d.usage };
 }
 
 defineNode({
   type: 'ai.llm', name: 'LLM', group: 'ai', icon: '🧠', credentialType: 'openaiApi',
-  description: 'Send a prompt to an LLM (OpenAI, Anthropic, or any OpenAI-compatible API).',
+  description: 'Send a prompt to an LLM: OpenAI, Anthropic, Ollama (free, on your own computer) or any OpenAI-compatible API.',
   properties: [
     ...providerProps,
     { name: 'system', label: 'System prompt', type: 'text', default: '' },
@@ -57,7 +108,7 @@ defineNode({
   ],
   async executeItem(ctx, item, i) {
     const provider = ctx.rawParam('provider');
-    const cred = await loadCredential(ctx.workspaceId, ctx.rawParam('credential'), CRED_BY_PROVIDER[provider]);
+    const cred = await loadProviderCredential(ctx, provider);
     const out = await complete({
       provider, cred, model: (await ctx.param('model', i)), system: (await ctx.param('system', i)), prompt: (await ctx.param('prompt', i)),
       temperature: Number((await ctx.param('temperature', i))), maxTokens: Number((await ctx.param('maxTokens', i))) || 1024,
@@ -134,7 +185,7 @@ async function runAgent({ provider, cred, model, system, prompt, tools, maxSteps
   const messages = [...(system ? [{ role: 'system', content: system }] : []), { role: 'user', content: prompt }];
   const toolDefs = active.map((n) => ({ type: 'function', function: { name: n, description: TOOLS[n].description, parameters: TOOLS[n].schema } }));
   for (let s = 0; s < maxSteps; s += 1) {
-    const d = await openaiChat(cred, { model, messages, temperature, ...(toolDefs.length ? { tools: toolDefs } : {}) });
+    const d = await chatFor(provider)(cred, { model, messages, temperature, ...(toolDefs.length ? { tools: toolDefs } : {}) });
     const msg = d.choices?.[0]?.message ?? {};
     if (!msg.tool_calls?.length) return { text: msg.content ?? '', steps };
     messages.push(msg);
@@ -162,8 +213,8 @@ defineNode({
   ],
   async executeItem(ctx, item, i) {
     const provider = ctx.rawParam('provider');
-    const cred = await loadCredential(ctx.workspaceId, ctx.rawParam('credential'), CRED_BY_PROVIDER[provider]);
-    const tools = (await ctx.jsonParam('tools', i)) ?? [];
+    const cred = await loadProviderCredential(ctx, provider);
+    const tools =(await ctx.jsonParam('tools', i)) ?? [];
     if (!Array.isArray(tools)) throw new Error('Tools must be a JSON array of tool names');
     return runAgent({
       provider, cred, model: (await ctx.param('model', i)), system: (await ctx.param('system', i)), prompt: (await ctx.param('prompt', i)),

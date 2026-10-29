@@ -14,6 +14,7 @@ Set them before starting - Windows PowerShell: `$env:PORT = "4000"`; Mac/Linux: 
 | `LITEFOREFLOW_SECRET` | auto-created in `data/.secret` | Master key for saved credentials and logins. **Back it up** - without it saved credentials cannot be read |
 | `ALLOW_SIGNUP` | `true` | Set `false` after you created your account so nobody else can register |
 | `BLOCK_PRIVATE_NETWORK` | `false` | `true` stops the HTTP node (and AI agent) reaching `localhost` / internal addresses. Turn on if others use your server |
+| `OLLAMA_HOST` | `localhost:11434` | Where the Ollama local-AI server runs. Still reachable by the AI nodes when `BLOCK_PRIVATE_NETWORK=true`; other internal addresses stay blocked |
 | `ENABLE_CODE_NODE` | `true` | `false` removes the Code node |
 | `SAVE_SUCCESS_DATA` | `true` | `false` stores only a one-line record of successful runs (saves disk) |
 | `MAX_CONCURRENCY` | `10` | Runs at the same time |

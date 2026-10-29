@@ -15,6 +15,19 @@ if (fs.existsSync(envFile)) {
 }
 
 const env = process.env;
+
+/** "localhost:11434", "0.0.0.0:11434" or a full URL -> a usable http(s) base URL without a trailing slash. */
+function ollamaUrl(raw) {
+  let v = String(raw || '').trim();
+  if (!v) return 'http://localhost:11434';
+  if (!/^https?:\/\//i.test(v)) v = `http://${v}`;
+  try {
+    const u = new URL(v);
+    if (u.hostname === '0.0.0.0') u.hostname = 'localhost'; // 0.0.0.0 is a listen address, not somewhere to connect to
+    if (!u.port && u.protocol === 'http:') u.port = '11434';
+    return u.origin;
+  } catch { return 'http://localhost:11434'; }
+}
 const port = Number(env.PORT) || 3000;
 
 export const config = {
@@ -42,6 +55,9 @@ export const config = {
   maxConcurrency: Number(env.MAX_CONCURRENCY) || 10,
   // When true, the HTTP node refuses to call loopback/private addresses (recommended for hosted multi-tenant use).
   blockPrivateNetwork: env.BLOCK_PRIVATE_NETWORK === 'true',
+  // Where the local Ollama server lives (same variable Ollama itself uses; "host:port" without http:// is fine).
+  // It stays reachable for the AI nodes even when BLOCK_PRIVATE_NETWORK=true.
+  ollamaUrl: ollamaUrl(env.OLLAMA_HOST),
   enableCodeNode: env.ENABLE_CODE_NODE !== 'false',
   // Set SAVE_SUCCESS_DATA=false to keep only a one-line record of successful runs (errors always keep full data).
   saveSuccessData: env.SAVE_SUCCESS_DATA !== 'false',
