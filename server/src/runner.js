@@ -95,7 +95,7 @@ export async function runExecution({ executionId, workflow, mode, triggerNodeId,
   if (result.status === 'error' && mode !== 'error' && mode !== 'subworkflow') {
     submitErrorWorkflow(workflow, executionId, result.error).catch((e) => console.error('[error-workflow]', e.message));
   }
-  return { executionId, status: result.status, error: result.error, lastOutput: result.lastOutput };
+  return { executionId, status: result.status, error: result.error, lastOutput: result.lastOutput, response: result.response };
 }
 
 /** Creates and runs an execution in the current process (sub-workflows, schedules, polling). */

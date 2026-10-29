@@ -16,8 +16,28 @@ const providerProps = [
     name: 'credential', label: 'Credential', type: 'credential', credentialTypeBy: { param: 'provider', map: CRED_BY_PROVIDER },
     help: 'Optional for Ollama: leave it empty to use Ollama on this computer.',
   },
-  { name: 'model', label: 'Model', type: 'string', default: '', placeholder: 'blank = provider default (Ollama: llama3.2)' },
+  {
+    name: 'model', label: 'Model', type: 'string', default: '', placeholder: 'blank = provider default (Ollama: llama3.2)',
+    dynamic: true, dynamicIf: { provider: 'ollama' }, help: 'With Ollama this is a list of the models installed on your computer.',
+  },
 ];
+
+/** The editor's model list for Ollama: whatever "ollama list" would show. */
+async function loadModels(ctx) {
+  if (ctx.param('provider') !== 'ollama') return [];
+  const cred = await ctx.credential();
+  const origin = (cred.baseUrl || config.ollamaUrl).replace(/\/$/, '');
+  let res;
+  try {
+    res = await httpRequest({ url: `${origin}/api/tags`, headers: cred.apiKey ? { authorization: `Bearer ${cred.apiKey}` } : {}, timeoutMs: 8000, trustedOrigin: config.ollamaUrl });
+  } catch (e) {
+    if (e.message === 'fetch failed') throw new Error(`Could not reach Ollama at ${origin}. Is it running?`);
+    throw e;
+  }
+  const names = (res.data?.models ?? []).map((m) => m.name);
+  if (!names.length) throw new Error('Ollama is running but has no models yet. Run: ollama pull llama3.2');
+  return names.map((n) => ({ value: n, label: n }));
+}
 
 /** Loads the node's credential; Ollama works without one (it talks to the local server). */
 async function loadProviderCredential(ctx, provider) {
@@ -109,15 +129,16 @@ defineNode({
     { name: 'system', label: 'System prompt', type: 'text', default: '' },
     { name: 'prompt', label: 'Prompt', type: 'text', default: 'Summarize: {{ $json.text }}', required: true },
     { name: 'temperature', label: 'Temperature', type: 'number', default: 0.2 },
-    { name: 'maxTokens', label: 'Max tokens', type: 'number', default: 1024 },
+    { name: 'maxTokens', label: 'Max tokens', type: 'number', default: '', placeholder: 'blank = automatic', help: 'Blank = automatic: 1,024, or 4,000 with Ollama because many local models think for a while before they answer.' },
     { name: 'parseJson', label: 'Parse reply as JSON', type: 'boolean', default: false, help: 'Adds the parsed object under `parsed`.' },
   ],
+  loadOptions: loadModels,
   async executeItem(ctx, item, i) {
     const provider = ctx.rawParam('provider');
     const cred = await loadProviderCredential(ctx, provider);
     const out = await complete({
       provider, cred, model: (await ctx.param('model', i)), system: (await ctx.param('system', i)), prompt: (await ctx.param('prompt', i)),
-      temperature: Number((await ctx.param('temperature', i))), maxTokens: Number((await ctx.param('maxTokens', i))) || 1024,
+      temperature: Number((await ctx.param('temperature', i))), maxTokens: Number((await ctx.param('maxTokens', i))) || (provider === 'ollama' ? 4000 : 1024),
     });
     if (ctx.rawParam('parseJson')) {
       const m = out.text.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -218,6 +239,7 @@ defineNode({
     { name: 'maxSteps', label: 'Max tool steps', type: 'number', default: 5 },
     { name: 'temperature', label: 'Temperature', type: 'number', default: 0.2 },
   ],
+  loadOptions: loadModels,
   async executeItem(ctx, item, i) {
     const provider = ctx.rawParam('provider');
     const cred = await loadProviderCredential(ctx, provider);

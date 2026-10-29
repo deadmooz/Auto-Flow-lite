@@ -10,8 +10,9 @@
     "start": "node --max-semi-space-size=2 --max-old-space-size=192 server/src/index.js",
     "dev": "node --watch server/src/index.js",
     "worker": "node --max-semi-space-size=2 --max-old-space-size=192 server/src/worker.js",
-    "test": "node --test --test-concurrency=1 server/test/api.test.js server/test/schedule.test.mjs",
+    "test": "node --test --test-concurrency=1 server/test/api.test.js server/test/schedule.test.mjs server/test/plugins.test.mjs",
     "qa": "node server/test/qa/qa.mjs",
+    "plugin:new": "node scripts/new-plugin.cjs",
     "scale-up": "npm install --save-optional pg@^8.13.1 bullmq@^6.4.2 ioredis@^6.0.0",
     "build": "npm install --prefix web && npm run build --prefix web",
     "dev:web": "npm install --prefix web && npm run dev --prefix web"

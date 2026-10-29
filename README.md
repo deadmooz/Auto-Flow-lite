@@ -45,6 +45,12 @@ To stop it, press **Ctrl+C** in the window (or just close the window).
    leave *Model* empty for `llama3.2`, or type any model you pulled (`ollama list` shows them).
 3. Ollama runs on another computer? Add an **Ollama (local AI)** credential with its address, or set `OLLAMA_HOST` (see [docs/ADVANCED.md](docs/ADVANCED.md)).
 
+## Plugins: add your own blocks
+
+LiteForeFlow comes with plugins for **Respond to Webhook**, **data tools** (Filter, Sort, Remove Duplicates, Date & Time, Crypto, batches) and a **REST connector** (GitHub, Trello, OpenWeather, Hacker News).  
+Open **Plugins** in the app to see or turn them off. To add your own, run `npm run plugin:new -- my-plugin`, edit the file it creates in `data/plugins`, and press *Reload*.
+Connecting a web service needs no code at all, just one small JSON file. Guide: [docs/PLUGINS.md](docs/PLUGINS.md).
+
 ## Good to know
 
 - **It only runs while it is started.** Schedules and webhooks work while the window is open. Leave it running on a computer that stays on.

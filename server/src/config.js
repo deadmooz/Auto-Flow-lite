@@ -58,6 +58,10 @@ export const config = {
   // Where the local Ollama server lives (same variable Ollama itself uses; "host:port" without http:// is fine).
   // It stays reachable for the AI nodes even when BLOCK_PRIVATE_NETWORK=true.
   ollamaUrl: ollamaUrl(env.OLLAMA_HOST),
+  // Only changed by the test-suite (to point Notion calls at a fake server).
+  notionUrl: (env.LITEFOREFLOW_NOTION_URL || 'https://api.notion.com').replace(/\/$/, ''),
+  // Extra folder to look for plugins in (besides ./plugins and <data>/plugins).
+  pluginsDir: env.PLUGINS_DIR || '',
   enableCodeNode: env.ENABLE_CODE_NODE !== 'false',
   // Set SAVE_SUCCESS_DATA=false to keep only a one-line record of successful runs (errors always keep full data).
   saveSuccessData: env.SAVE_SUCCESS_DATA !== 'false',

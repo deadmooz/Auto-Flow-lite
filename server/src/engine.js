@@ -2,6 +2,7 @@ import { createResolver } from './expressions.js';
 import { Sandbox } from './sandbox.js';
 import { getNodeType, withDefaults } from './nodes/index.js';
 import { loadCredential } from './credentials.js';
+import { pluginForMissingType } from './plugins.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
@@ -27,7 +28,12 @@ export function validateWorkflow(def) {
     ids.add(n.id);
     if (names.has(n.name)) issues.push(`Node name "${n.name}" is used more than once (names must be unique)`);
     names.add(n.name);
-    if (!getNodeType(n.type)) issues.push(`Node "${n.name}" has unknown type ${n.type}`);
+    if (!getNodeType(n.type)) {
+      const p = pluginForMissingType(n.type);
+      issues.push(p
+        ? `Node "${n.name}" comes from the plugin "${p.name}", which is ${p.status === 'disabled' ? 'switched off (turn it on under Plugins)' : p.status === 'error' ? 'broken (see the Plugins page)' : 'not installed'}`
+        : `Node "${n.name}" has unknown type ${n.type}`);
+    }
   }
   for (const c of conns) {
     if (!ids.has(c.from) || !ids.has(c.to)) issues.push('A connection points to a node that does not exist');
@@ -85,6 +91,7 @@ export async function runWorkflow(opts) {
   const startedAt = new Date().toISOString();
   const timeoutMs = clamp(settings.timeoutSec, 1, 3600) * 1000;
   let lastOutput = [];
+  let response = null; // what a "Respond to Webhook" node (plugin) wants the caller to receive
   let error = null;
 
   // One abort signal per run: it fires when the workflow timeout elapses, even in the middle of a slow node.
@@ -97,7 +104,7 @@ export async function runWorkflow(opts) {
   const finish = (status) => {
     clearTimeout(timer);
     for (const [id, r] of Object.entries(results)) r.name = byId.get(id)?.name;
-    return { status, error, results, lastOutput, staticData, startedAt, finishedAt: new Date().toISOString() };
+    return { status, error, results, lastOutput, response, staticData, startedAt, finishedAt: new Date().toISOString() };
   };
 
   let order;
@@ -201,6 +208,8 @@ export async function runWorkflow(opts) {
         },
         credential: () => loadCredential(workspaceId, params.credential, type.credentialType),
         log: (msg) => logs.push(String(msg)),
+        /** Sets the HTTP answer for the webhook that started this run: { status, headers, body }. The last call wins. */
+        setResponse: (r) => { response = r; },
         executeWorkflow: async (workflowId, items) => {
           if (!runSubWorkflow) throw new Error('Sub-workflows are not available here');
           if (depth >= MAX_SUBWORKFLOW_DEPTH) throw new Error('Sub-workflow nesting is too deep');

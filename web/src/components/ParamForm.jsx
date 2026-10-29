@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { Modal } from './common.jsx';
 import { SchedulePicker, TimezoneSelect } from './SchedulePicker.jsx';
+import { LiveSelect, FieldsEditor, optionList } from './LiveFields.jsx';
 
 export const OPERATORS = ['equals', 'notEquals', 'contains', 'notContains', 'startsWith', 'endsWith', 'gt', 'gte', 'lt', 'lte', 'isEmpty', 'isNotEmpty', 'regex', 'isTrue', 'isFalse'];
 const NO_RIGHT = new Set(['isEmpty', 'isNotEmpty', 'isTrue', 'isFalse']);
@@ -25,10 +26,16 @@ export function CredentialModal({ typeId, onClose, onSaved, existing }) {
   const [data, setData] = useState(existing?.data ?? {});
   const [secretsSet] = useState(existing?.secretsSet ?? []);
   const [error, setError] = useState('');
+  const [test, setTest] = useState(null); // { busy } | { ok, warn, message }
 
   useEffect(() => { api('/credential-types').then(setTypes); }, []);
   const def = types.find((t) => t.id === type);
   const options = Array.isArray(typeId) ? types.filter((t) => typeId.includes(t.id)) : types;
+
+  const runTest = async () => {
+    setTest({ busy: true });
+    try { setTest(await api('/credentials/test', { method: 'POST', body: { id: existing?.id, type, data } })); } catch (err) { setTest({ ok: false, message: err.message }); }
+  };
 
   const save = async (e) => {
     e.preventDefault();
@@ -52,6 +59,12 @@ export function CredentialModal({ typeId, onClose, onSaved, existing }) {
             </select>
           </label>
         )}
+        {def?.setup?.length > 0 && (
+          <div className="setup-steps">
+            <b>How to get this</b>
+            <ol>{def.setup.map((s, i) => <li key={i}>{s}</li>)}</ol>
+          </div>
+        )}
         <label>Name<input value={name} onChange={(e) => setName(e.target.value)} placeholder={def?.name ?? 'My credential'} /></label>
         {def?.fields.map((f) => (
           <label key={f.name}>{f.label}{f.required && ' *'}
@@ -69,6 +82,12 @@ export function CredentialModal({ typeId, onClose, onSaved, existing }) {
           </label>
         ))}
         <p className="muted small">Secrets are encrypted at rest and never shown again after saving.</p>
+        {def && (
+          <div className="row gap wrap">
+            <button type="button" onClick={runTest} disabled={test?.busy}>{test?.busy ? 'Testing…' : 'Test connection'}</button>
+            {test && !test.busy && <span className={`test-result ${test.ok ? (test.warn || test.untested ? 'warn' : 'ok') : 'bad'}`} role="status">{test.ok ? (test.warn || test.untested ? '⚠ ' : '✓ ') : '✕ '}{test.message}</span>}
+          </div>
+        )}
         {error && <div className="error">{error}</div>}
         <div className="row gap end">
           <button type="button" onClick={onClose}>Cancel</button>
@@ -145,11 +164,13 @@ export default function ParamForm({ typeDef, params, onChange, credentials, relo
   const set = (name, v) => onChange({ ...params, [name]: v });
   const props = typeDef.properties.filter((p) => visible(p, values));
   if (!props.length) return <p className="muted">This node has no settings.</p>;
+  const everyday = props.filter((p) => !p.advanced);
+  const advanced = props.filter((p) => p.advanced);
 
-  return (
-    <div className="stack">
-      {props.map((p) => {
+  const renderProp = (p) => {
         const v = values[p.name];
+        // a list filled from the live service (only when its condition holds, e.g. the Ollama model list)
+        const live = p.dynamic && (!p.dynamicIf || Object.entries(p.dynamicIf).every(([k, want]) => values[k] === want));
         let input;
         switch (p.type) {
           case 'number':
@@ -159,7 +180,9 @@ export default function ParamForm({ typeDef, params, onChange, credentials, relo
             input = <input type="checkbox" checked={!!v} onChange={(e) => set(p.name, e.target.checked)} />;
             break;
           case 'options':
-            input = <select value={v ?? ''} onChange={(e) => set(p.name, e.target.value)}>{p.options.map((o) => <option key={o} value={o}>{o || '(none)'}</option>)}</select>;
+            input = live
+              ? <LiveSelect typeDef={typeDef} prop={p} values={values} value={v} onChange={(nv) => set(p.name, nv)} />
+              : <select value={v ?? ''} onChange={(e) => set(p.name, e.target.value)}>{optionList(p.options).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select>;
             break;
           case 'text':
             input = <textarea rows={4} value={v ?? ''} onChange={(e) => set(p.name, e.target.value)} />;
@@ -185,10 +208,24 @@ export default function ParamForm({ typeDef, params, onChange, credentials, relo
           case 'credential':
             input = <CredentialSelect prop={p} value={v} values={values} onChange={(nv) => set(p.name, nv)} credentials={credentials} reloadCredentials={reloadCredentials} />;
             break;
+          case 'fields':
+            input = <FieldsEditor typeDef={typeDef} prop={p} values={values} value={v} onChange={(nv) => set(p.name, nv)} />;
+            break;
           default:
-            input = <input value={v ?? ''} placeholder={p.placeholder} onChange={(e) => set(p.name, e.target.value)} />;
+            input = live
+              ? <LiveSelect typeDef={typeDef} prop={p} values={values} value={v} onChange={(nv) => set(p.name, nv)} />
+              : <input value={v ?? ''} placeholder={p.placeholder} onChange={(e) => set(p.name, e.target.value)} />;
         }
-        if (p.type === 'schedule' || p.type === 'timezone') return <div key={p.name} className="field">{input}</div>; // several controls: not wrapped in a <label>
+        // several controls in one field: not wrapped in a <label>
+        if (['schedule', 'timezone', 'fields'].includes(p.type) || live) {
+          return (
+            <div key={p.name} className="field">
+              {p.type === 'fields' || live ? <span className="field-label">{p.label}{p.required && <b className="req"> *</b>}</span> : null}
+              {input}
+              {p.help && <span className="muted small">{p.help}</span>}
+            </div>
+          );
+        }
         return (
           <label key={p.name} className={p.type === 'boolean' ? 'inline' : ''}>
             <span>{p.label}{p.required && <b className="req"> *</b>}</span>
@@ -196,7 +233,17 @@ export default function ParamForm({ typeDef, params, onChange, credentials, relo
             {p.help && <span className="muted small">{p.help}</span>}
           </label>
         );
-      })}
+  };
+
+  return (
+    <div className="stack">
+      {everyday.map(renderProp)}
+      {advanced.length > 0 && (
+        <details className="advanced">
+          <summary>Advanced</summary>
+          <div className="stack">{advanced.map(renderProp)}</div>
+        </details>
+      )}
     </div>
   );
 }

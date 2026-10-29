@@ -8,6 +8,7 @@ import { authRouter, meRouter, requireAuth, HttpError } from './routes/auth.js';
 import { workflowsRouter } from './routes/workflows.js';
 import { catalogRouter, credentialsRouter, executionsRouter, toolsRouter, stripeWebhookRouter } from './routes/resources.js';
 import { webhookRouter } from './routes/webhooks.js';
+import { pluginsRouter } from './routes/plugins.js';
 import './jobs.js'; // registers the job handler with the queue
 import { queueMode } from './queue.js';
 import { dialect } from './db.js';
@@ -46,6 +47,7 @@ export function createApp() {
   app.use('/api/workflows', requireAuth, workflowsRouter);
   app.use('/api/credentials', requireAuth, credentialsRouter);
   app.use('/api/executions', requireAuth, executionsRouter);
+  app.use('/api/plugins', requireAuth, pluginsRouter);
   app.use('/api', requireAuth, catalogRouter);
   app.use('/api', requireAuth, toolsRouter);
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
