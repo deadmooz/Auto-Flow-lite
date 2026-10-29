@@ -15,6 +15,13 @@ export const credentialTypes = [
   { id: 'openaiApi', name: 'OpenAI (or compatible)', fields: [secret('apiKey', 'API key'), text('baseUrl', 'Base URL', { required: false, placeholder: 'https://api.openai.com/v1' })] },
   { id: 'anthropicApi', name: 'Anthropic', fields: [secret('apiKey', 'API key'), text('baseUrl', 'Base URL', { required: false, placeholder: 'https://api.anthropic.com' })] },
   {
+    id: 'ollamaApi', name: 'Ollama (local AI)',
+    fields: [
+      text('baseUrl', 'Ollama address', { required: false, placeholder: 'http://localhost:11434' }),
+      secret('apiKey', 'API key (only if Ollama sits behind a proxy that asks for one)', { required: false }),
+    ],
+  },
+  {
     id: 'postgres', name: 'Postgres',
     fields: [
       text('host', 'Host'), text('port', 'Port', { placeholder: '5432', required: false }), text('database', 'Database'),

@@ -10,6 +10,7 @@ const RUN_ID = crypto.randomBytes(4).toString('hex');
 process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'liteforeflow-'));
 process.env.LITEFOREFLOW_SECRET = 'test-secret';
 process.env.STRIPE_WEBHOOK_SECRET = 'whsec_test';
+process.env.OLLAMA_HOST = '127.0.0.1:1'; // nothing listens here, so "Ollama is not running" is testable even on a PC that has it
 process.env.AUTH_RATE_LIMIT_PER_MIN = '1000'; // this suite creates many accounts from one IP
 // The same suite runs against the default stack (SQLite + in-process queue) or the production stack
 // (Postgres + Redis/BullMQ) when TEST_DATABASE_URL / TEST_REDIS_URL are set.
@@ -58,6 +59,8 @@ before(async () => {
         return res.end('{"ok":true}');
       }
       if (req.url === '/always-fails') { res.statusCode = 500; return res.end('{"error":"boom"}'); }
+      if (req.url === '/api/tags') return res.end(JSON.stringify({ models: [{ name: 'llama3.2:latest' }, { name: 'qwen2.5:7b' }] }));
+      if (req.url === '/v1/chat/completions' && json.model === 'missing') { res.statusCode = 404; return res.end(JSON.stringify({ error: { message: "model 'missing' not found" } })); }
       if (req.url === '/v1/chat/completions') {
         const hasToolResult = json.messages.some((m) => m.role === 'tool');
         if (json.tools && !hasToolResult) {
@@ -321,6 +324,45 @@ test('AI: LLM node (JSON parse) and agent tool loop against an OpenAI-compatible
   assert.equal(agent.steps[0].tool, 'calculator');
   assert.equal(agent.steps[0].output, '416.5');
   assert.match(agent.text, /416\.5/);
+});
+
+test('AI: Ollama works through its OpenAI-style API, needs no API key, and explains the common problems', async () => {
+  const token = await newUser();
+  const cred = await api('POST', '/api/credentials', { token, body: { name: 'Local AI', type: 'ollamaApi', data: { baseUrl: mockBase } } });
+  assert.equal(cred.status, 201, JSON.stringify(cred.data));
+  const run = async (nodes) => {
+    const wf = await createWf(token, 'ollama', [node('t', 'trigger.manual', 'Start'), ...nodes], nodes.map((n, i) => edge(i ? nodes[i - 1].id : 't', n.id)));
+    return api('POST', `/api/workflows/${wf.id}/run`, { token });
+  };
+
+  seen.length = 0;
+  let r = await run([
+    node('l', 'ai.llm', 'Classify', { provider: 'ollama', credential: cred.data.id, model: 'llama3.2', prompt: 'help', parseJson: true }),
+    node('a', 'ai.agent', 'Agent', { provider: 'ollama', credential: cred.data.id, prompt: 'What is 17% of 2450?', tools: '["calculator"]' }),
+  ]);
+  assert.equal(r.data.status, 'success', JSON.stringify(r.data.error));
+  assert.deepEqual(r.data.results.l.output[0][0].json.parsed, { urgent: true, summary: 'down' });
+  assert.equal(r.data.results.a.output[0][0].json.steps[0].output, '416.5');
+  const sent = seen.filter((s) => s.url === '/v1/chat/completions');
+  assert.ok(sent.length >= 3);
+  assert.equal(sent[0].body.model, 'llama3.2');
+  assert.equal(sent[1].body.model, 'llama3.2', 'blank model falls back to llama3.2');
+  assert.ok(sent.every((s) => s.auth === undefined), 'no API key means no Authorization header');
+
+  r = await run([node('l', 'ai.llm', 'Missing', { provider: 'ollama', credential: cred.data.id, model: 'missing', prompt: 'hi' })]);
+  assert.equal(r.data.status, 'error');
+  assert.match(JSON.stringify(r.data), /ollama pull missing/);
+  assert.match(JSON.stringify(r.data), /Installed models: llama3\.2:latest, qwen2\.5:7b/);
+
+  // no credential at all: uses OLLAMA_HOST, which is closed in this test
+  r = await run([node('l', 'ai.llm', 'Offline', { provider: 'ollama', prompt: 'hi' })]);
+  assert.equal(r.data.status, 'error');
+  assert.match(JSON.stringify(r.data), /Could not reach Ollama at http:\/\/127\.0\.0\.1:1/);
+
+  // OpenAI still insists on a credential
+  r = await run([node('l', 'ai.llm', 'NoKey', { provider: 'openai', prompt: 'hi' })]);
+  assert.equal(r.data.status, 'error');
+  assert.match(JSON.stringify(r.data), /No credential selected/);
 });
 
 test('plans: free tier limits active workflows and monthly runs', async () => {
