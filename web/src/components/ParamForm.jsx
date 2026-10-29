@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { Modal } from './common.jsx';
+import { SchedulePicker, TimezoneSelect } from './SchedulePicker.jsx';
 
 export const OPERATORS = ['equals', 'notEquals', 'contains', 'notContains', 'startsWith', 'endsWith', 'gt', 'gte', 'lt', 'lte', 'isEmpty', 'isNotEmpty', 'regex', 'isTrue', 'isFalse'];
 const NO_RIGHT = new Set(['isEmpty', 'isNotEmpty', 'isTrue', 'isFalse']);
@@ -175,12 +176,19 @@ export default function ParamForm({ typeDef, params, onChange, credentials, relo
           case 'conditions':
             input = <Conditions value={v} onChange={(nv) => set(p.name, nv)} />;
             break;
+          case 'schedule':
+            input = <SchedulePicker value={v} onChange={(nv) => set(p.name, nv)} />;
+            break;
+          case 'timezone':
+            input = <TimezoneSelect value={v} onChange={(nv) => set(p.name, nv)} />;
+            break;
           case 'credential':
             input = <CredentialSelect prop={p} value={v} values={values} onChange={(nv) => set(p.name, nv)} credentials={credentials} reloadCredentials={reloadCredentials} />;
             break;
           default:
             input = <input value={v ?? ''} placeholder={p.placeholder} onChange={(e) => set(p.name, e.target.value)} />;
         }
+        if (p.type === 'schedule' || p.type === 'timezone') return <div key={p.name} className="field">{input}</div>; // several controls: not wrapped in a <label>
         return (
           <label key={p.name} className={p.type === 'boolean' ? 'inline' : ''}>
             <span>{p.label}{p.required && <b className="req"> *</b>}</span>
