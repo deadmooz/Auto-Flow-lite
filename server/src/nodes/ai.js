@@ -92,7 +92,13 @@ async function complete({ provider, cred, model, system, prompt, temperature, ma
   }
   const messages = [...(system ? [{ role: 'system', content: system }] : []), { role: 'user', content: prompt }];
   const d = await chatFor(provider)(cred, { model, messages, temperature, max_tokens: maxTokens });
-  return { text: d.choices?.[0]?.message?.content ?? '', model: d.model, usage: d.usage };
+  const choice = d.choices?.[0];
+  const text = choice?.message?.content ?? '';
+  // "Thinking" models (for example qwen3, deepseek-r1) count their private reasoning against Max tokens; a small budget leaves no room for the answer.
+  if (!text.trim() && choice?.finish_reason === 'length') {
+    throw new Error(`The model used all ${maxTokens} tokens before it wrote an answer (thinking models spend many tokens reasoning first). Raise "Max tokens" (try 4000) or pick a model that does not think.`);
+  }
+  return { text, model: d.model, usage: d.usage };
 }
 
 defineNode({
@@ -138,7 +144,8 @@ const TOOLS = {
     schema: { type: 'object', properties: { expression: { type: 'string' } }, required: ['expression'] },
     run: async ({ expression }) => {
       if (!/^[\d\s+\-*/().,%^e]+$/i.test(expression)) throw new Error('Only numbers and + - * / % ( ) are allowed');
-      return String((await runCode(`return (${expression.replace(/\^/g, '**')});`, {}, { timeoutMs: 500 })).result);
+      const result = (await runCode(`return (${expression.replace(/\^/g, '**')});`, {}, { timeoutMs: 500 })).result;
+      return String(typeof result === 'number' && Number.isFinite(result) ? Number(result.toPrecision(12)) : result); // 2450*0.17 -> 416.5, not 416.50000000000006
     },
   },
   current_time: {
