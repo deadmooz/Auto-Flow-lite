@@ -145,7 +145,7 @@ function registerService(sdk, spec) {
         const host = (() => { try { return new URL(url).host; } catch { return url; } })();
         const code = e.cause?.code;
         if (e.name === 'TimeoutError') throw new Error(`${spec.name}: ${host} did not answer in 30 seconds`);
-        if (e.message === 'fetch failed' || code) {
+        if (e.unreachable || code) {
           const why = code === 'ECONNREFUSED' ? 'connection refused' : code === 'ENOTFOUND' ? 'no such address' : code === 'ECONNRESET' ? 'connection dropped' : code || 'network error';
           throw new Error(`${spec.name}: could not connect to ${host} (${why}). Check the address and your internet connection.`);
         }

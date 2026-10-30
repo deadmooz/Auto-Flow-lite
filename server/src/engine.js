@@ -47,24 +47,24 @@ export function validateWorkflow(def) {
 /** Nodes reachable from `startId`, in topological order. Throws on cycles. */
 export function reachableOrder(nodes, conns, startId) {
   if (!startId) return [];
+  const next = new Map(); // node id -> the ids it feeds (built once instead of scanning every connection for every node)
+  for (const c of conns) { if (!next.has(c.from)) next.set(c.from, []); next.get(c.from).push(c.to); }
   const reachable = new Set([startId]);
   const queue = [startId];
-  while (queue.length) {
-    const cur = queue.shift();
-    for (const c of conns) if (c.from === cur && !reachable.has(c.to)) { reachable.add(c.to); queue.push(c.to); }
+  for (let q = 0; q < queue.length; q += 1) {
+    for (const to of next.get(queue[q]) ?? []) if (!reachable.has(to)) { reachable.add(to); queue.push(to); }
   }
   const indeg = new Map([...reachable].map((id) => [id, 0]));
   for (const c of conns) if (reachable.has(c.from) && reachable.has(c.to)) indeg.set(c.to, indeg.get(c.to) + 1);
   const ready = [...reachable].filter((id) => indeg.get(id) === 0);
   const order = [];
-  while (ready.length) {
-    const id = ready.shift();
+  for (let r = 0; r < ready.length; r += 1) {
+    const id = ready[r];
     order.push(id);
-    for (const c of conns) {
-      if (c.from === id && reachable.has(c.to)) {
-        indeg.set(c.to, indeg.get(c.to) - 1);
-        if (indeg.get(c.to) === 0) ready.push(c.to);
-      }
+    for (const to of next.get(id) ?? []) {
+      if (!reachable.has(to)) continue;
+      indeg.set(to, indeg.get(to) - 1);
+      if (indeg.get(to) === 0) ready.push(to);
     }
   }
   if (order.length !== reachable.size) {
@@ -86,6 +86,8 @@ export async function runWorkflow(opts) {
   const nodes = workflow.definition?.nodes ?? [];
   const conns = workflow.definition?.connections ?? [];
   const byId = new Map(nodes.map((n) => [n.id, n]));
+  const incoming = new Map(); // node id -> its incoming connections, in definition order
+  for (const c of conns) { if (!incoming.has(c.to)) incoming.set(c.to, []); incoming.get(c.to).push(c); }
   const staticData = opts.staticData ?? {};
   const results = {};
   const outputs = {};
@@ -148,9 +150,10 @@ export async function runWorkflow(opts) {
       if (id === startId) {
         inputs[0] = onlyNode ? (onlyInput ?? [{ json: {} }]) : (opts.triggerItems ?? [{ json: {} }]);
       } else {
-        for (const c of conns) {
-          const produced = c.to === id ? outputs[c.from]?.[c.fromOutput ?? 0] : null;
-          if (produced?.length) inputs[c.toInput ?? 0].push(...produced);
+        for (const c of incoming.get(id) ?? []) {
+          const produced = outputs[c.from]?.[c.fromOutput ?? 0];
+          // a plain loop: push(...produced) passes every item as an argument and crashes above ~150,000 items
+          if (produced?.length) { const dest = inputs[c.toInput ?? 0]; for (const it of produced) dest.push(it); }
         }
         if (inputs.every((a) => a.length === 0)) {
           results[id] = { status: 'skipped' };
@@ -166,6 +169,7 @@ export async function runWorkflow(opts) {
 
       const params = withDefaults(type, node.parameters);
       const logs = [];
+      let credentialOnce;
       const sandbox = new Sandbox(); // borrows a pooled V8 isolate on first use; given back by dispose()
       // One evaluator per node run: plain lookups never touch the sandbox, everything else shares one context, and the costly
       // shared data ($node, $input) is built once, not once per item.
@@ -196,7 +200,8 @@ export async function runWorkflow(opts) {
           if (typeof resolved !== 'string') return resolved;
           try { return JSON.parse(resolved); } catch { throw new Error(`"${name}" is not valid JSON`); }
         },
-        credential: () => loadCredential(workspaceId, params.credential, type.credentialType),
+        // opened (database read + decryption) once per node run, not once per item
+        credential: () => (credentialOnce ??= loadCredential(workspaceId, params.credential, type.credentialType)),
         log: (msg) => logs.push(String(msg)),
         /** Sets the HTTP answer for the webhook that started this run: { status, headers, body }. The last call wins. */
         setResponse: (r) => { response = r; },

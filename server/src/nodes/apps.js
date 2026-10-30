@@ -294,7 +294,7 @@ defineNode({
       for (let i = 0; i < inputs[0].length; i += 1) {
         const params = (await ctx.jsonParam('params', i)) ?? [];
         const r = await client.query(ctx.rawParam('query'), params);
-        if (r.rows.length) out.push(...r.rows.map((row) => ({ json: row })));
+        if (r.rows.length) for (const row of r.rows) out.push({ json: row }); // a loop: spreading a big result set would crash
         else out.push({ json: { rowCount: r.rowCount } });
       }
       return [out];
@@ -317,7 +317,7 @@ defineNode({
     const c = await ctx.credential();
     const nodemailer = (await import('nodemailer')).default;
     const transport = nodemailer.createTransport({
-      host: c.host, port: Number(c.port) || 587, secure: !!c.secure,
+      host: c.host, port: Number(c.port) || (c.secure ? 465 : 587), secure: !!c.secure, // an empty port means the usual one
       auth: c.user ? { user: c.user, pass: c.password } : undefined,
     });
     const out = [];

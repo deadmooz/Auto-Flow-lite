@@ -52,6 +52,10 @@ export async function boot(name, env = {}, { dataDir } = {}) {
   let log = '';
   proc.stdout.on('data', (d) => { log += d; });
   proc.stderr.on('data', (d) => { log += d; });
+  let stopping = false;
+  proc.on('exit', (code, signal) => { // a server that dies on its own must say how, or the next request only shows ECONNREFUSED
+    if (!stopping) console.error(`\n!! server ${name} (port ${port}) exited on its own: code ${code} signal ${signal}\n--- its last output ---\n${log.slice(-3000)}\n---`);
+  });
   const base = `http://localhost:${port}`;
   for (let i = 0; i < 150; i += 1) {
     try { if ((await fetch(`${base}/api/health`)).ok) break; } catch { /* starting */ }
@@ -60,7 +64,8 @@ export async function boot(name, env = {}, { dataDir } = {}) {
   }
   return {
     name, base, port, dir, proc, log: () => log,
-    stop: async (signal = 'SIGKILL') => { proc.kill(signal); await sleep(300); },
+    expectExit: () => { stopping = true; }, // the test ends the server itself
+    stop: async (signal = 'SIGKILL') => { stopping = true; proc.kill(signal); await sleep(300); },
   };
 }
 

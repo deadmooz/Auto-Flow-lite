@@ -23,11 +23,14 @@ export function checkDefinition(def) {
   return { nodes: def.nodes, connections: def.connections };
 }
 
+/** A name as shown in lists: trimmed, at most 120 characters; blank (or only spaces) falls back. */
+const cleanName = (name, fallback) => String(name ?? '').trim().slice(0, 120) || fallback;
+
 export async function createWorkflow(workspaceId, name, definition, settings = {}) {
   const id = uid();
   await run(
     'INSERT INTO workflows (id, workspace_id, name, active, definition, settings, static_data, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
-    id, workspaceId, String(name || 'Untitled workflow').slice(0, 120), 0, JSON.stringify(definition), JSON.stringify(settings), '{}', now(), now(),
+    id, workspaceId, cleanName(name, 'Untitled workflow'), 0, JSON.stringify(definition), JSON.stringify(settings), '{}', now(), now(),
   );
   return loadWorkflow(id, workspaceId);
 }
@@ -39,7 +42,8 @@ const mustFind = async (req) => {
 };
 
 workflowsRouter.get('/', async (req, res) => {
-  res.json((await all('SELECT * FROM workflows WHERE workspace_id = ? ORDER BY updated_at DESC', req.workspaceId)).map(summary));
+  // not SELECT *: static_data (an RSS feed keeps up to 500 ids there) and settings are not shown in the list
+  res.json((await all('SELECT id, name, active, definition, created_at, updated_at FROM workflows WHERE workspace_id = ? ORDER BY updated_at DESC', req.workspaceId)).map(summary));
 });
 
 workflowsRouter.post('/', async (req, res) => {
@@ -56,7 +60,7 @@ workflowsRouter.put('/:id', async (req, res) => {
   const def = definition ? checkDefinition(definition) : wf.definition;
   await run(
     'UPDATE workflows SET name = ?, definition = ?, settings = ?, updated_at = ? WHERE id = ?',
-    name ? String(name).slice(0, 120) : wf.name, JSON.stringify(def), JSON.stringify(settings ?? wf.settings), now(), wf.id,
+    cleanName(name, wf.name), JSON.stringify(def), JSON.stringify(settings ?? wf.settings), now(), wf.id,
   );
   let updated = await loadWorkflow(wf.id, req.workspaceId);
   let warning;
@@ -139,8 +143,12 @@ workflowsRouter.post('/:id/nodes/:nodeId/test', async (req, res) => {
 
   let items = Array.isArray(input) ? input.map((j) => ({ json: j })) : null;
   if (!items) {
-    const recent = await all('SELECT data FROM executions WHERE workflow_id = ? AND data IS NOT NULL ORDER BY started_at DESC LIMIT 10', wf.id);
-    items = recent.map((r) => parseStored(r.data)?.[node.id]?.input?.[0]).find((x) => x?.length) ?? sampleItems(node);
+    // newest run first, and stop at the first one that reached this node (each record can be up to 1 MB to unpack)
+    for (const r of await all('SELECT data FROM executions WHERE workflow_id = ? AND data IS NOT NULL ORDER BY started_at DESC LIMIT 10', wf.id)) {
+      const found = parseStored(r.data)?.[node.id]?.input?.[0];
+      if (found?.length) { items = found; break; }
+    }
+    items ??= sampleItems(node);
   }
   res.json(await enqueue({
     kind: 'test-node', workflowId: wf.id, workspaceId: wf.workspaceId, definition: definition ? def : undefined, nodeId: node.id, input: items,

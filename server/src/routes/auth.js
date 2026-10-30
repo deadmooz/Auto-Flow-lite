@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -18,6 +19,9 @@ const attempts = new Map();
 function rateLimit(req, res, next) {
   const key = req.ip;
   const t = Date.now();
+  if (attempts.size > 5000) { // a public server sees many addresses: forget the ones that have been quiet for a minute
+    for (const [ip, list] of attempts) if (!list.length || t - list[list.length - 1] >= 60_000) attempts.delete(ip);
+  }
   const recent = (attempts.get(key) ?? []).filter((x) => t - x < 60_000);
   if (recent.length >= config.authRateLimitPerMin) return next(new HttpError(429, 'Too many attempts, try again in a minute'));
   recent.push(t);
@@ -25,7 +29,9 @@ function rateLimit(req, res, next) {
   return next();
 }
 
-const sign = (userId) => jwt.sign({ sub: userId }, jwtSecret, { expiresIn: '7d' });
+// The key object is built once; passing the plain string makes the library rebuild it on every request.
+const jwtKey = crypto.createSecretKey(Buffer.from(jwtSecret, 'utf8'));
+const sign = (userId) => jwt.sign({ sub: userId }, jwtKey, { algorithm: 'HS256', expiresIn: '7d' });
 const publicUser = (u) => ({ id: u.id, email: u.email, name: u.name });
 const workspacesOf = async (userId) => all(
   'SELECT w.id, w.name, w.plan, m.role FROM members m JOIN workspaces w ON w.id = m.workspace_id WHERE m.user_id = ? ORDER BY m.created_at',
@@ -75,7 +81,7 @@ export async function requireAuth(req, res, next) {
     const header = req.get('authorization') ?? '';
     if (!header.startsWith('Bearer ')) throw new HttpError(401, 'Authentication required');
     let payload;
-    try { payload = jwt.verify(header.slice(7), jwtSecret); } catch { throw new HttpError(401, 'Session expired, please sign in again'); }
+    try { payload = jwt.verify(header.slice(7), jwtKey, { algorithms: ['HS256'] }); } catch { throw new HttpError(401, 'Session expired, please sign in again'); }
     const user = await get('SELECT * FROM users WHERE id = ?', payload.sub);
     if (!user) throw new HttpError(401, 'Account not found');
     const spaces = await workspacesOf(user.id);

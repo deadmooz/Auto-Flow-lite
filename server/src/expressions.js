@@ -21,35 +21,75 @@ const LOOKUP = /^\s*(\$json|\$itemIndex|\$now|\$workflow|\$node\[\s*(?:"([^"\\]+
 const SEGMENT = /\.([A-Za-z_$][\w$]*)|\[(\d{1,6})\]|\[\s*"([^"\\]*)"\s*\]|\[\s*'([^'\\]*)'\s*\]/g;
 const hasOwn = Object.prototype.hasOwnProperty;
 
-/** The value of a plain property path, or MISS when real JavaScript is needed (so errors read exactly as before). */
-function lookup(code, base, getExtra) {
+/*
+ * Every text with {{ }} is taken apart ONCE (not once per item): where its expressions are, whether each one is a plain lookup
+ * (and its path, already split into keys), and the wrapper the sandbox runs. 10,000 items with the same setting reuse it.
+ */
+const CACHE_MAX = 2000;
+const templates = new Map(); // text -> { whole: code } | { parts: [string | code] }
+const codes = new Map(); // expression code -> { path, src, needsExtra }
+const remember = (map, key, value) => { if (map.size >= CACHE_MAX) map.clear(); map.set(key, value); return value; };
+
+function templateOf(str) {
+  const hit = templates.get(str);
+  if (hit) return hit;
+  const matches = [...str.matchAll(EXPR_RE)];
+  if (matches.length === 1 && matches[0][0] === str.trim()) return remember(templates, str, { whole: matches[0][1] });
+  const parts = [];
+  let last = 0;
+  for (const m of matches) {
+    if (m.index > last) parts.push(str.slice(last, m.index));
+    parts.push({ code: m[1] });
+    last = m.index + m[0].length;
+  }
+  if (last < str.length) parts.push(str.slice(last));
+  return remember(templates, str, { parts });
+}
+
+/** A plain property path, already split: { root, name?, keys } - or null when real JavaScript is needed. */
+function compilePath(code) {
   const m = LOOKUP.exec(code);
-  if (!m) return MISS;
+  if (!m) return null;
+  const keys = [];
+  for (const seg of (m[4] ?? '').matchAll(SEGMENT)) {
+    const key = seg[1] ?? seg[2] ?? seg[3] ?? seg[4];
+    if (FORBIDDEN_KEYS.has(key)) return null; // never followed here; the sandbox answers exactly as JavaScript would
+    keys.push(key);
+  }
+  return { root: m[1].slice(0, 5), name: m[2] ?? m[3], keys };
+}
+
+function codeOf(code) {
+  return codes.get(code) ?? remember(codes, code, {
+    path: compilePath(code),
+    needsExtra: NEEDS_EXTRA.test(code),
+    src: `(function () { const __v = (${code}\n); const __s = JSON.stringify(__v); return __s === undefined ? '' : __s; })()`,
+  });
+}
+
+/** The value of a plain property path, or MISS when real JavaScript is needed (so errors read exactly as before). */
+function lookup(path, base, getExtra) {
   let cur;
-  switch (m[1].slice(0, 5)) {
+  switch (path.root) {
     case '$json': cur = base.$json; break;
     case '$item': cur = base.$itemIndex; break;
     case '$now': cur = base.$now; break;
     case '$work': cur = base.$workflow; break;
     default: {
       const nodes = getExtra().$node;
-      const name = m[2] ?? m[3];
-      if (!nodes || !hasOwn.call(nodes, name) || !nodes[name]) return MISS;
-      cur = nodes[name].json;
+      if (!nodes || !hasOwn.call(nodes, path.name) || !nodes[path.name]) return MISS;
+      cur = nodes[path.name].json;
     }
   }
-  if (m[4]) {
-    for (const seg of m[4].matchAll(SEGMENT)) {
-      const key = seg[1] ?? seg[2] ?? seg[3] ?? seg[4];
-      if (cur === null || cur === undefined || FORBIDDEN_KEYS.has(key)) return MISS;
-      if (typeof cur === 'string') {
-        if (key === 'length') cur = cur.length;
-        else if (/^\d+$/.test(key)) cur = cur[key];
-        else return MISS;
-      } else if (typeof cur === 'object') {
-        cur = hasOwn.call(cur, key) ? cur[key] : undefined;
-      } else return MISS;
-    }
+  for (const key of path.keys) {
+    if (cur === null || cur === undefined) return MISS;
+    if (typeof cur === 'string') {
+      if (key === 'length') cur = cur.length;
+      else if (/^\d+$/.test(key)) cur = cur[key];
+      else return MISS;
+    } else if (typeof cur === 'object') {
+      cur = hasOwn.call(cur, key) ? cur[key] : undefined;
+    } else return MISS;
   }
   // what the sandbox would have returned after JSON.stringify -> JSON.parse
   if (cur !== null && typeof cur === 'object') return JSON.parse(JSON.stringify(cur));
@@ -86,11 +126,14 @@ export function createNodeEvaluator({ baseFn, extraFn, sandbox = new Sandbox() }
   };
 
   const evalCode = async (code, i) => {
-    const hit = lookup(code, baseOf(i), getExtra);
-    if (hit !== MISS) return hit;
+    const info = codeOf(code);
+    if (info.path) {
+      const hit = lookup(info.path, baseOf(i), getExtra);
+      if (hit !== MISS) return hit;
+    }
     try {
-      prepare(i, NEEDS_EXTRA.test(code));
-      const out = await rc.run(`(function () { const __v = (${code}\n); const __s = JSON.stringify(__v); return __s === undefined ? '' : __s; })()`, EXPR_TIMEOUT_MS);
+      prepare(i, info.needsExtra);
+      const out = await rc.run(info.src, EXPR_TIMEOUT_MS);
       return out === '' ? undefined : JSON.parse(out);
     } catch (e) {
       throw new Error(`Expression error in {{ ${code.trim()} }}: ${e.message}`);
@@ -99,17 +142,15 @@ export function createNodeEvaluator({ baseFn, extraFn, sandbox = new Sandbox() }
 
   const resolveString = async (str, i) => {
     if (!str.includes('{{')) return str;
-    const matches = [...str.matchAll(EXPR_RE)];
-    if (matches.length === 1 && matches[0][0] === str.trim()) return evalCode(matches[0][1], i);
+    const t = templateOf(str);
+    if (t.whole !== undefined) return evalCode(t.whole, i);
     let out = '';
-    let last = 0;
-    for (const m of matches) {
-      out += str.slice(last, m.index);
-      const v = await evalCode(m[1], i);
+    for (const part of t.parts) {
+      if (typeof part === 'string') { out += part; continue; }
+      const v = await evalCode(part.code, i);
       out += v === undefined || v === null ? '' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
-      last = m.index + m[0].length;
     }
-    return out + str.slice(last);
+    return out;
   };
 
   const resolve = async (value, i = 0) => {

@@ -16,6 +16,7 @@ Set them before starting - Windows PowerShell: `$env:PORT = "4000"`; Mac/Linux: 
 | `BLOCK_PRIVATE_NETWORK` | `false` | `true` stops the HTTP node (and AI agent) reaching `localhost` / internal addresses. Turn on if others use your server |
 | `OLLAMA_HOST` | `localhost:11434` | Where the Ollama local-AI server runs. Still reachable by the AI nodes when `BLOCK_PRIVATE_NETWORK=true`; other internal addresses stay blocked |
 | `ITEM_CONCURRENCY` | `5` | How many items a read-only API block (HTTP Request GET, the REST connector's GET operations) may fetch at the same time (1-20). `1` = strictly one after another, polite to rate-limited services. POST/PUT/DELETE calls never overlap |
+| `HTTP_MAX_RESPONSE_MB` | `25` | The largest answer a block may download from a web service (HTTP Request, REST connector, app blocks). A bigger answer fails the block with a clear message instead of filling the server's memory. Raise it only if you really need large downloads |
 | `PLUGINS_DIR` | - | An extra folder to load plugins from (besides `plugins/` and `data/plugins/`). See [PLUGINS.md](PLUGINS.md) |
 | `ENABLE_CODE_NODE` | `true` | `false` removes the Code node |
 | `SAVE_SUCCESS_DATA` | `true` | `false` stores only a one-line record of successful runs (saves disk) |

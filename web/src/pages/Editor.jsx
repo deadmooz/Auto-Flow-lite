@@ -64,6 +64,8 @@ export default function Editor() {
   );
 }
 
+const LEAVE_QUESTION = 'You have unsaved changes in this workflow. Leave without saving?';
+
 function EditorInner() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -140,6 +142,21 @@ function EditorInner() {
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
+
+  // beforeunload only covers closing or reloading the tab; the sidebar links change page inside the app and would
+  // silently drop unsaved work, so ask first (capture phase: before the router handles the click).
+  useEffect(() => {
+    if (!dirty) return undefined;
+    const onClick = (e) => {
+      const a = e.target.closest?.('a[href], [data-leaves-page]');
+      if (!a) return;
+      if (a.tagName === 'A' && (a.target === '_blank' || e.ctrlKey || e.metaKey || e.shiftKey || a.origin !== window.location.origin || a.pathname === window.location.pathname)) return;
+      if (!window.confirm(LEAVE_QUESTION)) { e.preventDefault(); e.stopPropagation(); }
+    };
+    document.addEventListener('click', onClick, true);
+    return () => document.removeEventListener('click', onClick, true);
+  }, [dirty]);
+  const leave = () => { if (!dirty || window.confirm(LEAVE_QUESTION)) navigate('/'); };
 
   useEffect(() => { if (message?.kind === 'ok') { const t = setTimeout(() => setMessage(null), 2500); return () => clearTimeout(t); } return undefined; }, [message]);
 
@@ -261,7 +278,7 @@ function EditorInner() {
   return (
     <div className="editor">
       <header className="editor-bar">
-        <button className="link" onClick={() => navigate('/')}>← Workflows</button>
+        <button className="link" onClick={leave}>← Workflows</button>
         <input
           className="title-input" value={meta.name} aria-label="Workflow name"
           onChange={(e) => { setMeta({ ...meta, name: e.target.value }); markDirty(); }}

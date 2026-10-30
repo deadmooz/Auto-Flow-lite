@@ -343,6 +343,7 @@ export default async function part4({ s1, sProd, sBill, mock }) {
   await t('RES-02', 'Graceful shutdown (SIGTERM) exits promptly', async () => {
     const srv = await boot('term', {});
     const t0 = Date.now();
+    srv.expectExit();
     srv.proc.kill('SIGTERM');
     await new Promise((r) => { srv.proc.on('exit', r); setTimeout(r, 6000); });
     if (process.platform === 'win32') { await srv.stop(); blocked('Windows cannot deliver SIGTERM to a Node child (process is terminated abruptly); verified on Linux containers earlier (docker stop finished the in-flight run)'); }

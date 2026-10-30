@@ -11,6 +11,7 @@ process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'liteforeflow-perf-
 process.env.DB_PATH = ':memory:';
 process.env.LITEFOREFLOW_SECRET = 'perf';
 process.env.AUTH_RATE_LIMIT_PER_MIN = '100000';
+process.env.HTTP_MAX_RESPONSE_MB = '2'; // small, so the download limit can be tested quickly
 
 const { Sandbox, drainSandboxPool, sandboxMode } = await import('../src/sandbox.js');
 const { createNodeEvaluator, createResolver } = await import('../src/expressions.js');
@@ -179,4 +180,116 @@ test('the editor script that every page loads is small because the canvas is loa
   const editor = assets.find((f) => /^Editor-.*\.js$/.test(f));
   assert.ok(editor, 'the editor must be its own file');
   assert.ok(fs.statSync(new URL(`../../web/dist/assets/${main}`, import.meta.url)).size < 260_000);
+});
+
+/* -------------------------- found by reading the code (code-review pass) -------------------------- */
+const app2 = async () => {
+  await loadPlugins();
+  await startWorker();
+  const srv = createApp().listen(0);
+  const base = `http://127.0.0.1:${srv.address().port}`;
+  const api = async (method, url, { token, body } = {}) => {
+    const res = await fetch(base + url, { method, headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
+    const text = await res.text(); let data = text; try { data = JSON.parse(text); } catch { /* text */ }
+    return { status: res.status, data };
+  };
+  const token = (await api('POST', '/api/auth/signup', { body: { email: `cr${Date.now()}${Math.random()}@example.com`, password: 'password123', name: 'CR' } })).data.token;
+  const run = async (nodes) => {
+    const all = [{ id: 't', type: 'trigger.manual', name: 'Start', parameters: {}, position: { x: 0, y: 0 } }, ...nodes.map((n) => ({ position: { x: 0, y: 0 }, ...n }))];
+    const wf = (await api('POST', '/api/workflows', { token, body: { name: 'cr', definition: { nodes: all, connections: all.slice(1).map((n, i) => ({ from: all[i].id, to: n.id, fromOutput: 0, toInput: 0 })) } } })).data;
+    return (await api('POST', `/api/workflows/${wf.id}/run`, { token })).data;
+  };
+  return { srv, api, token, run };
+};
+
+test('250,000 items flow from one block to the next (passing them as call arguments used to crash above ~150,000)', async () => {
+  const { srv, run } = await app2();
+  try {
+    const r = await run([
+      { id: 'g', type: 'data.code', name: 'Gen', parameters: { code: 'return [{ list: Array.from({ length: 250000 }, (_, i) => i) }];' } },
+      { id: 's', type: 'data.splitOut', name: 'Split', parameters: { field: 'list' } },
+      { id: 'n', type: 'logic.noop', name: 'Next' },
+      { id: 'l', type: 'data.limit', name: 'Few', parameters: { max: 3 } },
+    ]);
+    assert.equal(r.status, 'success', JSON.stringify(r.error));
+    assert.deepEqual(r.results.l.output[0].map((x) => x.json.value), [0, 1, 2]);
+  } finally { srv.close(); }
+});
+
+test('a download larger than HTTP_MAX_RESPONSE_MB fails cleanly instead of filling the memory; smaller ones work', async () => {
+  const { srv, run } = await app2();
+  const MB = 1048576;
+  const big = http.createServer((req, res) => {
+    const size = Number(new URL(req.url, 'http://x').searchParams.get('mb')) * MB;
+    if (req.url.includes('declared')) res.setHeader('content-length', size);
+    res.setHeader('content-type', 'text/plain');
+    let sent = 0; const chunk = Buffer.alloc(64 * 1024, 120);
+    const pump = () => { while (sent < size) { sent += chunk.length; if (!res.write(chunk)) return res.once('drain', pump); } return res.end(); };
+    pump();
+  }).listen(0);
+  const url = (q) => `http://127.0.0.1:${big.address().port}/${q}`;
+  try {
+    for (const q of ['declared?mb=3', 'chunked?mb=3']) {
+      const r = await run([{ id: 'h', type: 'http.request', name: 'Get', parameters: { method: 'GET', url: url(q) } }]);
+      assert.equal(r.status, 'error', q);
+      assert.match(r.error.message, /larger than 2 MB.*HTTP_MAX_RESPONSE_MB/, q);
+    }
+    const ok = await run([{ id: 'h', type: 'http.request', name: 'Get', parameters: { method: 'GET', url: url('chunked?mb=1') } }]);
+    assert.equal(ok.status, 'success', JSON.stringify(ok.error));
+  } finally { big.close(); srv.close(); }
+});
+
+test('sign-in tokens issued before the signing-key change still work', async () => {
+  const { srv, api } = await app2();
+  try {
+    const { default: jwt } = await import('jsonwebtoken');
+    const { jwtSecret } = await import('../src/crypto.js');
+    const signup = await api('POST', '/api/auth/signup', { body: { email: `old${Date.now()}@example.com`, password: 'password123', name: 'Old' } });
+    const oldStyle = jwt.sign({ sub: signup.data.user.id }, jwtSecret, { expiresIn: '7d' }); // exactly how earlier versions signed
+    assert.equal((await api('GET', '/api/me', { token: oldStyle })).status, 200);
+    assert.equal((await api('GET', '/api/me', { token: signup.data.token })).status, 200);
+    const forged = jwt.sign({ sub: signup.data.user.id }, 'some other secret');
+    assert.equal((await api('GET', '/api/me', { token: forged })).status, 401);
+    const none = `${Buffer.from('{"alg":"none","typ":"JWT"}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: signup.data.user.id })).toString('base64url')}.`;
+    assert.equal((await api('GET', '/api/me', { token: none })).status, 401, 'unsigned tokens are refused');
+  } finally { srv.close(); }
+});
+
+
+/* ------------------------------- found by using the product (end-to-end QA pass) ------------------------------- */
+test('a service that cannot be reached is named, with the reason, instead of "fetch failed"; an empty error body adds no ": {}"', async () => {
+  const { srv, run } = await app2();
+  const closed = http.createServer().listen(0);
+  const port = closed.address().port;
+  await new Promise((r) => closed.close(r)); // nothing listens there now
+  const empty = http.createServer((req, res) => { res.writeHead(404, { 'content-type': 'application/json' }); res.end('{}'); }).listen(0);
+  try {
+    const refused = await run([{ id: 'h', type: 'http.request', name: 'Get', parameters: { url: `http://127.0.0.1:${port}/x` } }]);
+    assert.equal(refused.status, 'error');
+    assert.match(refused.error.message, new RegExp(`Could not reach 127\.0\.0\.1:${port}: the connection was refused`));
+    const missing = await run([{ id: 'h', type: 'http.request', name: 'Get', parameters: { url: `http://127.0.0.1:${empty.address().port}/nope` } }]);
+    assert.match(missing.error.message, /HTTP 404 Not Found$/);
+  } finally { empty.close(); srv.close(); }
+});
+
+test('names are trimmed; a blank name keeps the old one (workflows and credentials)', async () => {
+  const { srv, api, token } = await app2();
+  try {
+    const wf = (await api('POST', '/api/workflows', { token, body: { name: '  Orders  ' } })).data;
+    assert.equal(wf.name, 'Orders');
+    assert.equal((await api('PUT', `/api/workflows/${wf.id}`, { token, body: { name: '   ' } })).data.name, 'Orders');
+    assert.equal((await api('POST', '/api/workflows', { token, body: { name: '   ' } })).data.name, 'Untitled workflow');
+    assert.equal((await api('POST', '/api/credentials', { token, body: { name: '   ', type: 'httpBearer', data: { token: 'x' } } })).status, 400);
+    const c = (await api('POST', '/api/credentials', { token, body: { name: ' Key ', type: 'httpBearer', data: { token: 'x' } } })).data;
+    assert.equal(c.name, 'Key');
+    assert.equal((await api('PUT', `/api/credentials/${c.id}`, { token, body: { name: '  ', data: {} } })).data.name, 'Key');
+  } finally { srv.close(); }
+});
+
+test('an SMTP credential may leave the port empty (the usual port is used)', async () => {
+  const { srv, api, token } = await app2();
+  try {
+    const r = await api('POST', '/api/credentials', { token, body: { name: 'Mail', type: 'smtp', data: { host: 'smtp.example.com', from: 'a@example.com' } } });
+    assert.equal(r.status, 201, JSON.stringify(r.data));
+  } finally { srv.close(); }
 });
