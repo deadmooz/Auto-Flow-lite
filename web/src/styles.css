@@ -109,12 +109,21 @@ pre.json { margin: 0; padding: 10px; background: var(--surface-2); border-radius
 .ff-node-icon { font-size: 22px; } .ff-node-name { font-weight: 600; font-size: 13px; line-height: 1.2; word-break: break-word; } .ff-node-type { font-size: 11px; color: var(--muted); }
 .handle-label { position: absolute; left: 14px; top: -7px; font-size: 10px; color: var(--muted); white-space: nowrap; pointer-events: none; }
 .react-flow__handle { width: 10px; height: 10px; background: var(--primary); border: 2px solid var(--surface); }
-.react-flow { --xy-background-color: var(--bg); --xy-edge-stroke: var(--muted); --xy-background-pattern-color: var(--grid); background: var(--bg); }
+/* through xyflow's own variables: its stylesheet loads after this one, so plain rules on its classes lose (white minimap in dark mode) */
+.react-flow {
+  --xy-background-color: var(--bg); --xy-edge-stroke: var(--muted); --xy-background-pattern-color: var(--grid); background: var(--bg);
+  --xy-minimap-background-color: var(--surface); --xy-controls-button-background-color: var(--surface);
+  --xy-controls-button-background-color-hover: var(--surface-2); --xy-controls-button-color: var(--text);
+  --xy-controls-button-color-hover: var(--text); --xy-controls-button-border-color: var(--border);
+}
 .react-flow__controls-button, .react-flow__minimap { background: var(--surface); color: var(--text); fill: var(--text); border-color: var(--border); }
 
 @media (max-width: 860px) {
   .sidebar { width: 64px; padding: 12px 6px; } .sidebar .brand { font-size: 0; } .sidebar .brand::first-letter { font-size: 20px; }
-  .sidebar nav a { font-size: 11px; text-align: center; padding: 6px 2px; } .sidebar-foot { display: none; }
+  .sidebar nav a { font-size: 11px; text-align: center; padding: 6px 2px; }
+  /* compact, not hidden: Sign out and the workspace switcher must stay reachable on tablets and phones */
+  .sidebar-foot { align-items: stretch; font-size: 11px; text-align: center; } .sidebar-foot .muted { display: none; }
+  .sidebar-foot select { width: 100%; font-size: 11px; padding: 2px; } .sidebar-foot button { padding: 4px 0; font-size: 11px; }
   .palette { width: 150px; } .panel { width: 280px; }
 }
 

@@ -79,7 +79,7 @@ function Shell() {
             </select>
           )}
           <div className="muted small">{me.user.email}</div>
-          <button className="link" onClick={logout}>Sign out</button>
+          <button className="link" data-leaves-page onClick={logout}>Sign out</button>
         </div>
       </aside>
       <main className="content">

@@ -23,11 +23,14 @@ export function checkDefinition(def) {
   return { nodes: def.nodes, connections: def.connections };
 }
 
+/** A name as shown in lists: trimmed, at most 120 characters; blank (or only spaces) falls back. */
+const cleanName = (name, fallback) => String(name ?? '').trim().slice(0, 120) || fallback;
+
 export async function createWorkflow(workspaceId, name, definition, settings = {}) {
   const id = uid();
   await run(
     'INSERT INTO workflows (id, workspace_id, name, active, definition, settings, static_data, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)',
-    id, workspaceId, String(name || 'Untitled workflow').slice(0, 120), 0, JSON.stringify(definition), JSON.stringify(settings), '{}', now(), now(),
+    id, workspaceId, cleanName(name, 'Untitled workflow'), 0, JSON.stringify(definition), JSON.stringify(settings), '{}', now(), now(),
   );
   return loadWorkflow(id, workspaceId);
 }
@@ -57,7 +60,7 @@ workflowsRouter.put('/:id', async (req, res) => {
   const def = definition ? checkDefinition(definition) : wf.definition;
   await run(
     'UPDATE workflows SET name = ?, definition = ?, settings = ?, updated_at = ? WHERE id = ?',
-    name ? String(name).slice(0, 120) : wf.name, JSON.stringify(def), JSON.stringify(settings ?? wf.settings), now(), wf.id,
+    cleanName(name, wf.name), JSON.stringify(def), JSON.stringify(settings ?? wf.settings), now(), wf.id,
   );
   let updated = await loadWorkflow(wf.id, req.workspaceId);
   let warning;

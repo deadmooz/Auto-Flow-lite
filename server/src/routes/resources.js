@@ -81,12 +81,13 @@ credentialsRouter.get('/:id', async (req, res) => {
 });
 
 credentialsRouter.post('/', async (req, res) => {
-  const { name, type, data } = req.body ?? {};
+  const { type, data } = req.body ?? {};
+  const name = String(req.body?.name ?? '').trim().slice(0, 80);
   if (!name || !type || typeof data !== 'object') throw new HttpError(400, 'name, type and data are required');
   const err = validateCredentialData(type, data);
   if (err) throw new HttpError(400, err);
   const id = uid();
-  await run('INSERT INTO credentials (id, workspace_id, name, type, data, created_at) VALUES (?,?,?,?,?,?)', id, req.workspaceId, String(name).slice(0, 80), type, encryptJson(data), now());
+  await run('INSERT INTO credentials (id, workspace_id, name, type, data, created_at) VALUES (?,?,?,?,?,?)', id, req.workspaceId, name, type, encryptJson(data), now());
   res.status(201).json({ id, name, type });
 });
 
@@ -99,8 +100,9 @@ credentialsRouter.put('/:id', async (req, res) => {
   const merged = { ...existing, ...incoming };
   const err = validateCredentialData(row.type, merged);
   if (err) throw new HttpError(400, err);
-  await run('UPDATE credentials SET name = ?, data = ? WHERE id = ?', req.body?.name ? String(req.body.name).slice(0, 80) : row.name, encryptJson(merged), row.id);
-  res.json({ id: row.id, name: req.body?.name ?? row.name, type: row.type });
+  const name = String(req.body?.name ?? '').trim().slice(0, 80) || row.name; // blank keeps the old name
+  await run('UPDATE credentials SET name = ?, data = ? WHERE id = ?', name, encryptJson(merged), row.id);
+  res.json({ id: row.id, name, type: row.type });
 });
 
 credentialsRouter.delete('/:id', async (req, res) => {

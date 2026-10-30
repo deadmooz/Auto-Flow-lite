@@ -317,7 +317,7 @@ defineNode({
     const c = await ctx.credential();
     const nodemailer = (await import('nodemailer')).default;
     const transport = nodemailer.createTransport({
-      host: c.host, port: Number(c.port) || 587, secure: !!c.secure,
+      host: c.host, port: Number(c.port) || (c.secure ? 465 : 587), secure: !!c.secure, // an empty port means the usual one
       auth: c.user ? { user: c.user, pass: c.password } : undefined,
     });
     const out = [];

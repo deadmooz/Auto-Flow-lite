@@ -255,3 +255,41 @@ test('sign-in tokens issued before the signing-key change still work', async () 
   } finally { srv.close(); }
 });
 
+
+/* ------------------------------- found by using the product (end-to-end QA pass) ------------------------------- */
+test('a service that cannot be reached is named, with the reason, instead of "fetch failed"; an empty error body adds no ": {}"', async () => {
+  const { srv, run } = await app2();
+  const closed = http.createServer().listen(0);
+  const port = closed.address().port;
+  await new Promise((r) => closed.close(r)); // nothing listens there now
+  const empty = http.createServer((req, res) => { res.writeHead(404, { 'content-type': 'application/json' }); res.end('{}'); }).listen(0);
+  try {
+    const refused = await run([{ id: 'h', type: 'http.request', name: 'Get', parameters: { url: `http://127.0.0.1:${port}/x` } }]);
+    assert.equal(refused.status, 'error');
+    assert.match(refused.error.message, new RegExp(`Could not reach 127\.0\.0\.1:${port}: the connection was refused`));
+    const missing = await run([{ id: 'h', type: 'http.request', name: 'Get', parameters: { url: `http://127.0.0.1:${empty.address().port}/nope` } }]);
+    assert.match(missing.error.message, /HTTP 404 Not Found$/);
+  } finally { empty.close(); srv.close(); }
+});
+
+test('names are trimmed; a blank name keeps the old one (workflows and credentials)', async () => {
+  const { srv, api, token } = await app2();
+  try {
+    const wf = (await api('POST', '/api/workflows', { token, body: { name: '  Orders  ' } })).data;
+    assert.equal(wf.name, 'Orders');
+    assert.equal((await api('PUT', `/api/workflows/${wf.id}`, { token, body: { name: '   ' } })).data.name, 'Orders');
+    assert.equal((await api('POST', '/api/workflows', { token, body: { name: '   ' } })).data.name, 'Untitled workflow');
+    assert.equal((await api('POST', '/api/credentials', { token, body: { name: '   ', type: 'httpBearer', data: { token: 'x' } } })).status, 400);
+    const c = (await api('POST', '/api/credentials', { token, body: { name: ' Key ', type: 'httpBearer', data: { token: 'x' } } })).data;
+    assert.equal(c.name, 'Key');
+    assert.equal((await api('PUT', `/api/credentials/${c.id}`, { token, body: { name: '  ', data: {} } })).data.name, 'Key');
+  } finally { srv.close(); }
+});
+
+test('an SMTP credential may leave the port empty (the usual port is used)', async () => {
+  const { srv, api, token } = await app2();
+  try {
+    const r = await api('POST', '/api/credentials', { token, body: { name: 'Mail', type: 'smtp', data: { host: 'smtp.example.com', from: 'a@example.com' } } });
+    assert.equal(r.status, 201, JSON.stringify(r.data));
+  } finally { srv.close(); }
+});
