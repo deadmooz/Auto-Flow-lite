@@ -80,6 +80,26 @@ export function formEncode(obj, prefix = '', params = new URLSearchParams()) {
   return params;
 }
 
+/** Reads the answer, but stops at HTTP_MAX_RESPONSE_MB: one huge download must not take the whole server's memory. */
+async function readLimited(res, host) {
+  const limit = config.httpMaxResponseBytes;
+  const tooBig = () => new Error(`The answer from ${host} is larger than ${Math.round(limit / 1048576)} MB, the most a block may download (setting HTTP_MAX_RESPONSE_MB). Ask the service for less (paging, filters).`);
+  const declared = Number(res.headers.get('content-length'));
+  if (declared > limit) { res.body?.cancel().catch(() => {}); throw tooBig(); }
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > limit) { reader.cancel().catch(() => {}); throw tooBig(); }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks, size).toString('utf8');
+}
+
 export async function httpRequest({
   method = 'GET', url, headers = {}, query, body, bodyType = 'json',
   timeoutMs = 30000, ignoreStatus = false, responseType = 'auto', signal, trustedOrigin,
@@ -110,7 +130,7 @@ export async function httpRequest({
     signal: signal ? AbortSignal.any([AbortSignal.timeout(timeoutMs), signal]) : AbortSignal.timeout(timeoutMs),
     redirect: config.blockPrivateNetwork ? 'manual' : 'follow',
   });
-  const text = await res.text();
+  const text = await readLimited(res, u.host);
   let data = text;
   const ct = res.headers.get('content-type') || '';
   if (responseType === 'json' || (responseType === 'auto' && (ct.includes('json') || /^\s*[[{]/.test(text)))) {

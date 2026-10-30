@@ -294,7 +294,7 @@ defineNode({
       for (let i = 0; i < inputs[0].length; i += 1) {
         const params = (await ctx.jsonParam('params', i)) ?? [];
         const r = await client.query(ctx.rawParam('query'), params);
-        if (r.rows.length) out.push(...r.rows.map((row) => ({ json: row })));
+        if (r.rows.length) for (const row of r.rows) out.push({ json: row }); // a loop: spreading a big result set would crash
         else out.push({ json: { rowCount: r.rowCount } });
       }
       return [out];
